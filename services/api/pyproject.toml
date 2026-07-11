@@ -1,13 +1,15 @@
 [project]
-name = "heliosai-api"
+name = "api"
 version = "0.1.0"
+description = "HeliosAI FastAPI Backend"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115.0,<0.116.0",
-    "uvicorn",
-    "gunicorn",
-    "pydantic>=2.9.0,<2.10.0",
-    "SQLAlchemy>=2.0.0,<2.1.0",
-    "structlog",
-    "heliosai-shared"
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+    "psycopg2-binary",
+    "pydantic",
+    "pydantic-settings",
+    "httpx",
 ]
