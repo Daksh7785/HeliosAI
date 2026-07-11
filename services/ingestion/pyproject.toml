@@ -1,11 +1,13 @@
 [project]
-name = "heliosai-ingestion"
+name = "ingestion"
 version = "0.1.0"
+description = "HeliosAI Ingestion Layer"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "astropy>=6.1.0,<6.2.0",
-    "sunpy>=6.0.0,<6.1.0",
-    "celery>=5.4.0,<5.5.0",
-    "structlog",
-    "heliosai-shared"
+    "requests",
+    "pydantic",
+    "celery",
+    "sqlalchemy",
+    "psycopg2-binary"
 ]
