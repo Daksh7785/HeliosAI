@@ -1,103 +1,151 @@
-# 02 — Software Requirements Specification (SRS)
+# 02 — Software Requirements Specification
 
 **HeliosAI** — AI-Powered Space Weather Intelligence Platform
 Document 02 of 61
 
 ---
 
-## 1. Purpose
+## 1. Executive Summary
 
-This document formally defines the functional and non-functional requirements for the HeliosAI platform. It translates the high-level goals from `01_Project_Vision.md` into concrete, testable engineering constraints.
+This is the formal SRS: functional and non-functional requirements, expressed as testable statements and user stories, derived directly from Problem Statement 15. Every later architecture and implementation document traces back to a requirement ID defined here.
 
 ---
 
-## 2. User Personas
+## 2. Purpose
 
-| Persona | Description | Primary Needs |
+Provide a single, unambiguous, testable source of truth for *what* HeliosAI must do, independent of *how* (architecture) or *why* (vision, `01_Project_Vision.md`).
+
+---
+
+## 3. Scope
+
+Covers functional requirements (FR), non-functional requirements (NFR), user stories, and requirement-level acceptance criteria. Does not cover system design (`03`–`05`) or data schema (`30_Database_Design.md`).
+
+---
+
+## 4. Requirement Numbering Convention
+
+`FR-<subsystem>-<seq>` for functional, `NFR-<category>-<seq>` for non-functional. Every requirement ID is stable once published — later documents cite it, never restate it.
+
+---
+
+## 5. Functional Requirements
+
+### 5.1 Ingestion (FR-ING)
+
+| ID | Requirement |
+|---|---|
+| FR-ING-01 | System shall fetch SoLEXS and HEL1OS Level-1 data from ISSDC PRADAN, automated where token access is available, manual-drop otherwise |
+| FR-ING-02 | System shall validate raw file integrity (checksum, expected schema) before processing |
+| FR-ING-03 | System shall process incrementally — never reprocess full history on each run |
+
+### 5.2 Processing (FR-PROC)
+
+| ID | Requirement |
+|---|---|
+| FR-PROC-01 | System shall synchronize spacecraft time to UTC for both payloads |
+| FR-PROC-02 | System shall perform background subtraction and noise filtering per payload |
+| FR-PROC-03 | System shall compute engineered features including hardness ratio, flux gradient, rise/decay constants, wavelet energy |
+
+### 5.3 Nowcasting (FR-NOW)
+
+| ID | Requirement |
+|---|---|
+| FR-NOW-01 | System shall detect flare candidates independently in each band |
+| FR-NOW-02 | System shall fuse per-band candidates into a master catalogue with confidence scoring |
+| FR-NOW-03 | System shall flag single-band-only detections as tentative, never silently drop or silently confirm them |
+| FR-NOW-04 | System shall assign a GOES-equivalent class (A/B/C/M/X) to each confirmed flare |
+
+### 5.4 Forecasting (FR-FORE)
+
+| ID | Requirement |
+|---|---|
+| FR-FORE-01 | System shall output the probability of a flare occurring within a configurable horizon N (15/30/60 min) |
+| FR-FORE-02 | System shall log predicted trigger timestamp and, once resolved, actual peak timestamp, to compute lead time |
+| FR-FORE-03 | System shall support multiple model families (gradient-boosted trees, LSTM/GRU, Transformer-family) behind a common interface |
+
+### 5.5 Explainability (FR-XAI)
+
+| ID | Requirement |
+|---|---|
+| FR-XAI-01 | System shall provide SHAP-based explanations for tree-model outputs |
+| FR-XAI-02 | System shall provide attention/integrated-gradients explanations for deep-model outputs |
+
+### 5.6 Serving & Dashboard (FR-SRV)
+
+| ID | Requirement |
+|---|---|
+| FR-SRV-01 | System shall expose REST + WebSocket APIs for catalogue and live data access |
+| FR-SRV-02 | System shall provide a dashboard visualizing dual-band light curves with synchronized time axes |
+| FR-SRV-03 | System shall visually alert (banner) when a flare is nowcasted or forecasted |
+| FR-SRV-04 | System shall support optional webhook/email alert delivery |
+
+### 5.7 Access Control (FR-SEC)
+
+| ID | Requirement |
+|---|---|
+| FR-SEC-01 | System shall authenticate all API access (no anonymous write access) |
+| FR-SEC-02 | System shall enforce role-based permissions (viewer/analyst/ml_engineer/admin/service) |
+
+---
+
+## 6. Non-Functional Requirements
+
+| ID | Category | Requirement |
 |---|---|---|
-| **Space Weather Researcher** | Studies flare physics and precursors. | Access to raw features, reproducible model training, explainability metrics (SHAP). |
-| **System Operator** | Monitors live solar activity. | Low-latency alerts, clear UI, low False Alarm Rate (FAR). |
-| **Data Engineer** | Manages the ingestion pipeline. | Robust error handling for data gaps, clear telemetry, easy backfilling. |
+| NFR-SCALE-01 | Scalability | Handle continuous multi-day, multi-cadence ingestion without full reprocessing |
+| NFR-REL-01 | Reliability | Ingestion/processing jobs idempotent and resumable |
+| NFR-LAT-01 | Latency | Nowcasting alerts generated within a documented bounded delay of data availability |
+| NFR-AUD-01 | Auditability | Every catalogue entry and forecast traceable to model version + data snapshot |
+| NFR-SEC-01 | Security | All endpoints authenticated; no hardcoded secrets |
+| NFR-PORT-01 | Portability | Fully containerized, `docker compose up` reproducible |
 
 ---
 
-## 3. Functional Requirements (FR)
+## 7. User Stories
 
-### 3.1 Data Ingestion & Synchronization
-- **FR-ING-01:** The system MUST ingest Level-1 FITS format light curves from SoLEXS and HEL1OS.
-- **FR-ING-02:** The system MUST automatically resample and synchronize mismatched timestamps between the two instruments to a common temporal grid (e.g., 1-second cadence).
-- **FR-ING-03:** The system MUST gracefully handle missing data (gaps up to N minutes) through interpolation or explicit `NaN` masking.
-
-### 3.2 Nowcasting & Forecasting
-- **FR-ML-01:** The system MUST classify active flares (Nowcasting) into GOES-equivalent classes (A, B, C, M, X) based on live flux levels.
-- **FR-ML-02:** The system MUST output a probability forecast for flare occurrence within a parameterized future window (e.g., next 30, 60 minutes).
-- **FR-ML-03:** A flare detection MUST require confirmation from both SoLEXS and HEL1OS channels (Dual-Band Fusion) to be marked as "Confirmed" in the master catalogue.
-- **FR-ML-04:** Single-instrument detections MUST be recorded but flagged as "Tentative".
-
-### 3.3 Dashboard & Alerting
-- **FR-UI-01:** The system MUST provide a web-based dashboard displaying live fused light curves, current active flares, and forecast probabilities.
-- **FR-UI-02:** The dashboard MUST update in near real-time via WebSockets as new data arrives.
-- **FR-UI-03:** The system MUST dispatch alerts (e.g., via webhook or email) when a forecast probability exceeds a configurable threshold for M/X class flares.
-
-### 3.4 Model Operations
-- **FR-OPS-01:** The system MUST track all model training runs, hyperparameters, and evaluation metrics in a central registry (MLflow).
-- **FR-OPS-02:** The system MUST link every generated forecast to the specific model version and data snapshot ID used to produce it.
+| ID | Story |
+|---|---|
+| US-01 | As a space-weather analyst, I want to see live dual-band light curves so that I can visually confirm an automated alert. |
+| US-02 | As an ML engineer, I want every model version logged with its training data snapshot so that I can reproduce or roll back any production model. |
+| US-03 | As an admin, I want to adjust alert thresholds and preview their historical impact before saving, so that I don't blindly degrade FAR. |
+| US-04 | As a researcher, I want to export the master catalogue for a date range so that I can perform independent analysis. |
+| US-05 | As a new contributor, I want a documented, containerized local setup so that I can start developing without manual environment archaeology. |
 
 ---
 
-## 4. Non-Functional Requirements (NFR)
+## 8. Requirement Traceability (sample)
 
-### 4.1 Performance & Latency
-- **NFR-PERF-01:** The end-to-end latency from data availability in the ingestion queue to an updated dashboard UI MUST NOT exceed 5 seconds.
-- **NFR-PERF-02:** Model inference (both nowcasting and forecasting) MUST execute in under 500ms per timestamp.
+| Requirement | Implemented/Detailed In |
+|---|---|
+| FR-NOW-02, FR-NOW-03 | `22_Nowcasting.md` |
+| FR-FORE-01, FR-FORE-02 | `23_Forecasting.md`, `48_Model_Evaluation.md` |
+| FR-SRV-02, FR-SRV-03 | `39_Dashboard.md`, `42_Alert_System.md` |
+| FR-SEC-01, FR-SEC-02 | `35_Authentication.md`, `36_Authorization.md` |
+| NFR-AUD-01 | `44_Logging.md`, `46_MLOps.md` |
 
-### 4.2 Reliability & Availability
-- **NFR-REL-01:** The system MUST recover automatically from transient database or message broker disconnects without data loss (via at-least-once Celery task retries).
-- **NFR-REL-02:** Missing data from one instrument MUST NOT crash the processing pipeline; it must degrade to single-band operation smoothly.
-
-### 4.3 Security & Auditing
-- **NFR-SEC-01:** Admin-level endpoints (e.g., triggering manual model retraining) MUST require JWT-based authentication.
-- **NFR-SEC-02:** No secrets, API keys, or database credentials SHALL be hardcoded in the repository.
-
-### 4.4 Portability & Maintainability
-- **NFR-PORT-01:** The entire platform MUST be deployable on a single host via `docker compose up --build`.
-- **NFR-PORT-02:** The codebase MUST adhere strictly to Python typing (`mypy`) and formatting (`black`/`ruff`) standards.
+Full traceability matrix (all IDs × all documents) is maintained as the documentation set closes out, in `MASTER_IMPLEMENTATION_GUIDE.md`.
 
 ---
 
-## 5. Constraints
+## 9. Acceptance Criteria
 
-- **Language:** The platform is constrained to a 100% Python ecosystem (FastAPI, Dash, Celery, scikit-learn/PyTorch).
-- **Data Volume:** Designed for the data rates of Aditya-L1; high-frequency magnetogram image processing is out of scope for Phase 1.
-
----
-
-## 6. Interfaces to Other Documents
-
-- **`03_System_Architecture.md`** — defines the components that satisfy these requirements.
-- **`53_Testing.md`** — defines how these requirements are verified.
-- **`48_Model_Evaluation.md`** — defines the specific success metrics for `FR-ML-01` and `FR-ML-02`.
+- [ ] Every FR/NFR has a stable ID never renumbered after publication.
+- [ ] Every FR/NFR is cited by at least one downstream document once that tier is written.
+- [ ] No requirement is untestable (each is phrased as a verifiable "shall" statement).
 
 ---
 
-## 7. Acceptance Criteria
+## 10. Review Checklist
 
-- [ ] All requirements are uniquely identifiable (e.g., FR-ING-01).
-- [ ] Requirements are testable and measurable, avoiding vague terms like "fast" or "reliable" without qualification.
-- [ ] Requirements cleanly separate functional (what it does) from non-functional (how well it does it).
-
----
-
-## 8. Review Checklist
-
-- [ ] Ensure alignment with the Problem Statement 15 brief.
-- [ ] Verify that dual-band fusion is explicitly required (FR-ML-03).
+- [ ] No architecture/design leaked into requirement statements (kept to "what," not "how").
+- [ ] User stories map to at least one FR each.
 
 ---
 
-## 9. Future Improvements
+## 11. Future Improvements
 
-- Add specific throughput requirements (events per second) if the system scales beyond single-spacecraft data.
+- Add non-functional requirements for accessibility compliance level once `38_UI_UX.md`'s WCAG target is finalized in implementation.
 
 ---
 
@@ -105,32 +153,32 @@ This document formally defines the functional and non-functional requirements fo
 
 ```
 PROJECT CONTEXT:
-You are implementing a documentation-only artifact — this task produces no source code.
-Repository: HeliosAI. This is document 02 of a 61-document specification set.
+HeliosAI — dual-band Aditya-L1 flare nowcasting/forecasting platform (ISRO PS-15).
+Document 02 of 61: formal Software Requirements Specification.
 
-FOLDER:
-docs/02_Software_Requirements_Specification.md
+FOLDER: docs/02_Software_Requirements_Specification.md
 
-FILES TO PRODUCE:
-None (documentation task). Output exactly one file: docs/02_Software_Requirements_Specification.md
+FILES TO PRODUCE: docs/02_Software_Requirements_Specification.md only.
 
-CODING STANDARDS:
-N/A — Markdown only. Follow the structural template used by all other docs.
+CODING STANDARDS: Markdown; requirement IDs must follow the FR-<subsystem>-<seq> /
+NFR-<category>-<seq> convention exactly, and IDs must never be renumbered once published
+(later docs will cite them by ID).
 
-EXPECTED OUTPUT:
-A single self-contained Markdown file capturing formal FRs and NFRs with unique IDs.
+EXPECTED OUTPUT: Complete FR/NFR tables per subsystem (Ingestion, Processing, Nowcasting,
+Forecasting, Explainability, Serving, Access Control), user stories, and a traceability
+sample table, matching the structure above.
 
-TESTING:
-Documentation-only — validation is a Markdown lint pass.
+EDGE CASES / VALIDATION: Every requirement must be phrased as a testable "shall" statement,
+not an aspiration. Reject any requirement that cannot be objectively verified.
 
-ACCEPTANCE CRITERIA:
-See §7 above.
+TESTING: Cross-reference audit — every FR/NFR ID must appear in at least one later document's
+"Interfaces to Other Documents" or equivalent section once that document exists.
 
-DELIVERABLES:
-docs/02_Software_Requirements_Specification.md
+ACCEPTANCE CRITERIA: See §9 above.
 
-GIT COMMIT FORMAT:
-docs: add 02_Software_Requirements_Specification.md (FRs and NFRs)
+DELIVERABLES: docs/02_Software_Requirements_Specification.md
+
+GIT COMMIT FORMAT: docs: add 02_SRS.md (functional and non-functional requirements)
 ```
 
 ---
