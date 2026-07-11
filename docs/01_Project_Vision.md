@@ -7,91 +7,97 @@ Document 01 of 61
 
 ## 1. Executive Summary
 
-The vision for HeliosAI is to provide an open, reproducible, and highly accurate space weather intelligence platform capable of anticipating solar flares before they peak. By leveraging dual-band cross-validation from Aditya-L1's SoLEXS and HEL1OS payloads, HeliosAI bridges the gap between raw scientific telemetry and actionable operational insights.
+HeliosAI's vision is to make dual-band X-ray solar flare intelligence — detection, prediction, and explanation — as reproducible and auditable as any other production ML system, rather than a collection of one-off research scripts. This document states the long-term vision and the principles that keep every later engineering decision aligned with it.
 
 ---
 
 ## 2. Purpose
 
-- Define the long-term goals and boundaries of the HeliosAI platform.
-- Ensure all contributors understand what success looks like for Problem Statement 15.
-- Establish the guiding principles for design and architecture decisions.
+To answer, in a way every contributor can point back to: *why does HeliosAI exist, and what does "success" look like beyond the hackathon submission itself?*
 
 ---
 
 ## 3. Scope
 
-This document covers the high-level objectives and overarching philosophy of the project. It does not define specific functional requirements (see `02_Software_Requirements_Specification.md`) or technical stack choices (see `07_Tech_Stack.md`).
+Vision and guiding principles only. Concrete requirements are in `02_Software_Requirements_Specification.md`; this document is intentionally non-binding on implementation detail.
 
 ---
 
-## 4. Problem Statement Context
+## 4. Vision Statement
 
-ISRO's Aditya-L1 mission provides unprecedented high-cadence X-ray data. However, raw light curves alone do not provide advance warning of space weather events. Current forecasting relies heavily on GOES data or magnetogram imagery. HeliosAI addresses Problem Statement 15 by proving that early-stage hard X-ray precursors (from HEL1OS) combined with soft X-ray profiles (from SoLEXS) can provide a quantifiable predictive lead time for flare peaks.
-
----
-
-## 5. Core Objectives
-
-1. **Accuracy over Volume**: Prioritize a low False Alarm Rate (FAR) through dual-band fusion rather than maximizing unverified single-band triggers.
-2. **Reproducibility**: Ensure every model prediction can be traced back to a specific data snapshot and code version via MLflow.
-3. **Transparency**: Provide explainable AI (XAI) outputs so operators understand *why* a forecast was made, moving away from "black box" models.
-4. **Modularity**: Build a loosely coupled pipeline where ingestion, processing, modeling, and serving can evolve independently.
+> HeliosAI aims to be the reference open, reproducible, dual-band X-ray flare intelligence platform for the Aditya-L1 era — trusted enough that a scientist can act on its alerts, and transparent enough that they can audit exactly why it fired.
 
 ---
 
-## 6. Target Audience
+## 5. Guiding Principles
 
-- **Space Weather Researchers**: To study flare precursor signatures and validate new models.
-- **Satellite Operators**: To receive timely, actionable alerts regarding potential radio blackouts or orbital drag changes.
-- **ISRO / PS-15 Evaluators**: To verify the system's compliance with the hackathon's objectives and performance metrics.
+| Principle | What it means in practice |
+|---|---|
+| **Measure, don't assert** | Every performance claim (TPR, FAR, lead time) is computed on held-out data and logged, never hand-waved (`48_Model_Evaluation.md`) |
+| **Cross-validate before you alarm** | No single-band candidate is silently promoted to a confirmed catalogue entry (`22_Nowcasting.md`) |
+| **Explainability is not optional** | Every trigger — nowcast or forecast — must be traceable to evidence a scientist can inspect (`29_Explainable_AI.md`) |
+| **Reproducibility over cleverness** | A less exotic model with a fully logged, reproducible training run beats an unreproducible state-of-the-art one (`46_MLOps.md`, `47_Model_Training.md`) |
+| **All-Python, always** | Lowers the barrier for the scientific community that will use and extend this platform |
+| **Documentation-first** | Specification precedes implementation, one file at a time, so downstream AI-assisted implementation (Antigravity) never improvises architecture |
+
+---
+
+## 6. Long-Term Goals (beyond initial release)
+
+1. Become a credible reference implementation other Aditya-L1 data users can build on.
+2. Support multi-mission fusion (GOES, Solar Orbiter STIX) without a rewrite — architecture must anticipate this from day one (`03_System_Architecture.md`).
+3. Sustain an open-source contributor community (`58_Open_Source_Guidelines.md`).
+4. Produce a citable scientific research output (`59_Research_Paper.md`).
 
 ---
 
 ## 7. Success Criteria
 
-- Demonstrated positive lead time (trigger to peak) for M- and X-class flares.
-- Significant reduction in FAR when comparing the dual-band fusion approach to a single-band baseline.
-- Full end-to-end automation from raw FITS ingestion to dashboard visualization.
-- Complete, peer-reviewable documentation set (this 61-document series).
+| Dimension | Success looks like |
+|---|---|
+| Scientific | Dual-band fusion demonstrably reduces FAR vs. single-band baseline, quantified via ablation |
+| Engineering | Fully containerized, `docker compose up` reproducible deployment; CI green on every merge |
+| Operational | Nowcasting alert latency within documented bound; dashboard usable by a non-ML scientist |
+| Community | At least a functioning contribution pipeline exists at release (`58_Open_Source_Guidelines.md`) |
 
 ---
 
-## 8. Guiding Principles
+## 8. Non-Goals
 
-- **Measure, Don't Assert**: All claims about lead time, accuracy, or latency must be backed by empirical dashboard metrics.
-- **Keep it Pythonic**: Maintain an all-Python stack (including frontend via Dash) to align with the core competencies of the scientific data community.
-- **Fail Gracefully**: If one instrument goes offline, the system degrades to "tentative" single-band mode rather than crashing.
-- **Security by Default**: No hardcoded credentials, strict environment variable management, and secure API boundaries.
+- Becoming a certified, safety-of-life operational warning system (explicitly out of scope, README).
+- Replacing official ISRO calibration pipelines.
+- Building native mobile apps.
 
 ---
 
-## 9. Interfaces to Other Documents
+## 9. Stakeholders
 
-- **`00_Project_Overview.md`** — foundational context.
-- **`02_Software_Requirements_Specification.md`** — translates this vision into formal requirements.
-- **`08_Development_Roadmap.md`** — maps this vision to an execution timeline.
+| Stakeholder | Interest |
+|---|---|
+| Heliophysics researchers | Scientific validity, explainability, publishable results |
+| Space-weather operations desks | Timely, low-false-alarm alerts |
+| Open-source contributors | Clear contribution path, well-documented codebase |
+| Hackathon/PS-15 evaluators | Clear mapping from PS requirements to delivered capability |
 
 ---
 
 ## 10. Acceptance Criteria
 
-- [ ] The vision statement clearly distinguishes HeliosAI from existing single-instrument baselines.
-- [ ] Guiding principles provide unambiguous direction for resolving technical tradeoffs.
-- [ ] Success criteria are measurable and align with PS-15.
+- [ ] Vision statement is referenced (not restated) by `08_Development_Roadmap.md` and `60_Future_Enhancements.md`.
+- [ ] Guiding principles are each traceable to at least one concrete mechanism in a later document.
 
 ---
 
 ## 11. Review Checklist
 
-- [ ] Does not contain implementation details or specific algorithm choices.
-- [ ] Remains concise and accessible to non-technical stakeholders.
+- [ ] No requirements-level or architecture-level detail present (kept to vision/principles only).
+- [ ] Every principle in §5 links to a real document, not a placeholder.
 
 ---
 
 ## 12. Future Improvements
 
-- Revisit the vision statement after Phase 1 deployment to incorporate feedback from early scientific users.
+- Revisit vision annually against actual measured outcomes once the platform has operational history.
 
 ---
 
@@ -99,32 +105,31 @@ ISRO's Aditya-L1 mission provides unprecedented high-cadence X-ray data. However
 
 ```
 PROJECT CONTEXT:
-You are implementing a documentation-only artifact — this task produces no source code.
-Repository: HeliosAI. This is document 01 of a 61-document specification set.
+HeliosAI — dual-band (SoLEXS + HEL1OS) solar flare nowcasting/forecasting platform for
+Aditya-L1 (ISRO PS-15). This is document 01 of 61, stating project vision and principles.
 
-FOLDER:
-docs/01_Project_Vision.md
+FOLDER: docs/01_Project_Vision.md
 
-FILES TO PRODUCE:
-None (documentation task). Output exactly one file: docs/01_Project_Vision.md
+FILES TO PRODUCE: docs/01_Project_Vision.md only (documentation task, no source code).
 
-CODING STANDARDS:
-N/A — Markdown only. Follow the structural template used by all other docs.
+CODING STANDARDS: Markdown, follows the shared template (see 00_Project_Overview.md prompt
+for the full structural rule set).
 
-EXPECTED OUTPUT:
-A single self-contained Markdown file capturing the project vision, objectives, and success criteria.
+EXPECTED OUTPUT: Vision statement, guiding principles table, long-term goals, success
+criteria, non-goals, stakeholders — exactly as sectioned above, without diluting the
+guiding principles into vague statements unconnected to a concrete later document.
 
-TESTING:
-Documentation-only — validation is a Markdown lint pass.
+EDGE CASES / VALIDATION: Every principle listed must cite the specific downstream document
+that implements it, so this file cannot silently drift out of sync with the rest of the set.
 
-ACCEPTANCE CRITERIA:
-See §10 above.
+TESTING: Markdown lint; manual cross-reference check against docs it cites (22, 29, 46, 47,
+48, 58, 59) once those exist.
 
-DELIVERABLES:
-docs/01_Project_Vision.md
+ACCEPTANCE CRITERIA: See §10 above.
 
-GIT COMMIT FORMAT:
-docs: add 01_Project_Vision.md (project goals and guiding principles)
+DELIVERABLES: docs/01_Project_Vision.md
+
+GIT COMMIT FORMAT: docs: add 01_Project_Vision.md (vision, principles, success criteria)
 ```
 
 ---
