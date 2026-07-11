@@ -1,155 +1,180 @@
-# 05 — Low-Level Design (LLD)
+# 05 — Low-Level Design
 
 **HeliosAI** — AI-Powered Space Weather Intelligence Platform
 Document 05 of 61
 
 ---
 
-## 1. Purpose
+## 1. Executive Summary
 
-This document provides class-level and interface-level detail for the core HeliosAI components. It serves as the direct blueprint for software engineers implementing the system described in `04_High_Level_Design.md`.
+This document drops to class/interface-level detail for the components defined in `04_High_Level_Design.md`: key class signatures, the shared Intelligence model interface, repository pattern contracts, and the design-pattern rationale that `56_Coding_Standards.md` assumes as already decided.
 
 ---
 
-## 2. Core Interfaces
+## 2. Purpose
 
-### 2.1 The BaseModelPredictor Interface
-Every forecasting and nowcasting model must conform to this abstract base class. This ensures the Intelligence Layer can swap models without refactoring the calling code.
+Give implementers (human or Antigravity) exact interface contracts so independently-implemented modules remain compatible without a shared implementation session.
 
-```python
-from abc import ABC, abstractmethod
-from typing import Dict, Any
-import pandas as pd
+---
 
-class BaseModelPredictor(ABC):
-    @abstractmethod
-    def load_model(self, model_uri: str) -> None:
-        """Loads model weights/artifacts from MLflow or local cache."""
-        pass
+## 3. Scope
 
-    @abstractmethod
-    def predict_proba(self, features: pd.DataFrame) -> Dict[str, float]:
-        """
-        Returns probability distribution across flare classes.
-        Example: {'B': 0.8, 'C': 0.15, 'M': 0.04, 'X': 0.01}
-        """
-        pass
+Class-level interfaces, method signatures (language-level, not full bodies), and pattern application detail. Excludes database column-level schema (`30_Database_Design.md`) and REST route paths (`32_API_Design.md`).
 
-    @abstractmethod
-    def explain(self, features: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Returns feature importance or SHAP values for the given prediction.
-        """
-        pass
+---
+
+## 4. Core Design Patterns and Their Application
+
+| Pattern | Applied To | Rationale |
+|---|---|---|
+| Repository | All DB access from Serving/Intelligence | Decouples business logic from SQLAlchemy specifics; enables test doubles |
+| Service Layer | Business logic orchestration (e.g., `NowcastingService`) | Keeps FastAPI route handlers thin |
+| Strategy | Swappable nowcasting/forecasting model backends | Enables A/B model comparison without call-site changes |
+| Dependency Injection | FastAPI `Depends()` throughout | Testability, explicit dependency graph |
+| Factory | Model instantiation from MLflow registry pointer | Isolates model-loading logic from inference call sites |
+| Observer / Pub-Sub | Alert dispatch fan-out | New alert channels subscribe without modifying the Intelligence layer |
+
+---
+
+## 5. Intelligence Subsystem — Shared Model Interface
+
+```mermaid
+classDiagram
+    class FlareModel {
+        <<interface>>
+        +fit(X, y)
+        +predict(X) ClassLabel
+        +predict_proba(X) float
+        +explain(X) Explanation
+    }
+    class XGBoostFlareModel {
+        +fit(X, y)
+        +predict(X) ClassLabel
+        +predict_proba(X) float
+        +explain(X) Explanation
+    }
+    class TransformerFlareModel {
+        +fit(X, y)
+        +predict(X) ClassLabel
+        +predict_proba(X) float
+        +explain(X) Explanation
+    }
+    FlareModel <|.. XGBoostFlareModel
+    FlareModel <|.. TransformerFlareModel
 ```
 
-### 2.2 The Data Fetcher Interface
-Standardizes ingestion across different ISRO API endpoints.
+Every model family (`26_Machine_Learning.md`, `27_Deep_Learning.md`, `28_Transformer_Models.md`) implements this exact interface, referenced already by `56_Coding_Standards.md` §6.
+
+---
+
+## 6. Repository Pattern Contract
+
+```mermaid
+classDiagram
+    class CatalogueRepository {
+        <<interface>>
+        +save(event: FlareEvent) FlareEvent
+        +getById(id: str) FlareEvent
+        +query(filters: QueryFilters) List~FlareEvent~
+        +update(id: str, changes: dict) FlareEvent
+    }
+    class SQLAlchemyCatalogueRepository {
+        -session: AsyncSession
+        +save(event) FlareEvent
+        +getById(id) FlareEvent
+        +query(filters) List~FlareEvent~
+        +update(id, changes) FlareEvent
+    }
+    CatalogueRepository <|.. SQLAlchemyCatalogueRepository
+```
+
+Applied identically for `LightCurveRepository`, `AlertRepository`, `ModelRunRepository` — one repository interface per aggregate root, never a generic "god repository."
+
+---
+
+## 7. Service Layer Example — NowcastingService
 
 ```python
-from abc import ABC, abstractmethod
-from datetime import datetime
-import pandas as pd
+class NowcastingService:
+    def __init__(
+        self,
+        catalogue_repo: CatalogueRepository,
+        soft_detector: FlareModel,
+        hard_detector: FlareModel,
+        fusion_policy: FusionPolicy,
+    ): ...
 
-class BaseTelemetryFetcher(ABC):
-    @abstractmethod
-    def fetch_window(self, start: datetime, end: datetime) -> pd.DataFrame:
-        """Fetches telemetry for the specified time window."""
-        pass
+    def process_window(self, features: FeatureWindow) -> list[FlareEvent]:
+        """Detect independently per band, fuse, persist, return promoted events."""
+```
+
+Constructor-injected dependencies (repository, detectors, fusion policy) make this class fully testable with in-memory doubles — no database or model required for unit tests (`53_Testing.md`).
+
+---
+
+## 8. Class Diagram — Ingestion Subsystem
+
+```mermaid
+classDiagram
+    class Fetcher {
+        +fetch(source: str) RawFile
+    }
+    class FormatParser {
+        +parse(file: RawFile) ParsedRecord
+    }
+    class RawValidator {
+        +validate(record: ParsedRecord) ValidationResult
+    }
+    Fetcher --> FormatParser
+    FormatParser --> RawValidator
 ```
 
 ---
 
-## 3. Database Repositories
+## 9. Error Handling Contract
 
-Using the Repository pattern to encapsulate SQLAlchemy operations.
-
-### 3.1 FeatureRepository
-```python
-class FeatureRepository:
-    def save_features(self, df: pd.DataFrame) -> str:
-        """Saves a batch of features and returns a snapshot_id."""
-        pass
-
-    def get_features(self, start: datetime, end: datetime) -> pd.DataFrame:
-        """Retrieves synchronized features for a time window."""
-        pass
-```
-
-### 3.2 CatalogueRepository
-```python
-class CatalogueRepository:
-    def add_tentative_event(self, event_data: dict) -> int:
-        """Logs a single-band detection."""
-        pass
-
-    def promote_to_confirmed(self, event_id: int, cross_band_data: dict) -> None:
-        """Upgrades a tentative event to confirmed upon dual-band fusion."""
-        pass
-```
+| Layer | Exception Base Class | Handling Rule |
+|---|---|---|
+| Ingestion | `IngestionError` | Retried per `34_Background_Jobs.md` retry policy, then quarantined |
+| Processing | `ProcessingError` | Logged with input snapshot ID, does not crash the pipeline for other data |
+| Intelligence | `ModelInferenceError` | Falls back to last-known-good model version, alerts `admin` |
+| Serving | `APIError` (subclassed per HTTP status) | Converted to structured JSON error response, never a raw stack trace |
 
 ---
 
-## 4. Celery Task Definitions
+## 10. Validation Rules (Cross-Cutting)
 
-The asynchronous pipeline relies on specific task signatures.
-
-### 4.1 Ingestion Tasks
-- `fetch_solexs_data(start_iso: str, end_iso: str) -> bool`
-- `fetch_hel1os_data(start_iso: str, end_iso: str) -> bool`
-
-### 4.2 Processing Tasks
-- `sync_and_engineer_features(window_start: str, window_end: str) -> str` (Returns `snapshot_id`)
-
-### 4.3 Intelligence Tasks
-- `run_nowcast_inference(snapshot_id: str) -> dict`
-- `run_forecast_inference(snapshot_id: str) -> dict`
+- All Pydantic models reject unknown fields (`model_config = ConfigDict(extra="forbid")`) to catch upstream schema drift early.
+- All timestamps are timezone-aware UTC; naive datetimes are a validation error, not a silent assumption.
+- All flux values are validated non-negative; negative flux after background subtraction is flagged, not silently clipped, since it may indicate a calibration issue worth surfacing.
 
 ---
 
-## 5. Dependency Injection
+## 11. Research Notes
 
-To facilitate testing, core services receive their dependencies (repositories, predictors) via constructor injection.
-
-```python
-class ForecastingService:
-    def __init__(self, predictor: BaseModelPredictor, repo: FeatureRepository):
-        self.predictor = predictor
-        self.repo = repo
-
-    def execute_forecast(self, start: datetime, end: datetime):
-        features = self.repo.get_features(start, end)
-        probabilities = self.predictor.predict_proba(features)
-        # ... logic to save results and trigger alerts ...
-```
+The `FlareModel` interface deliberately mirrors scikit-learn's `fit`/`predict`/`predict_proba` convention so gradient-boosted-tree and deep-learning implementations both feel idiomatic to their respective ecosystems while remaining swappable.
 
 ---
 
-## 6. Interfaces to Other Documents
+## 12. Acceptance Criteria
 
-- **`04_High_Level_Design.md`** — provides the context for these classes.
-- **`56_Coding_Standards.md`** — dictates the exact typing and documentation requirements for these signatures.
-
----
-
-## 7. Acceptance Criteria
-
-- [ ] All critical ML and data-access interfaces are defined.
-- [ ] Dependency injection is explicitly modeled.
-- [ ] Celery task boundaries reflect the HLD pipeline.
+- [ ] Every interface defined here is implemented by at least one concrete class in later documents.
+- [ ] Every pattern in §4 is traceable to a specific class diagram in this document.
+- [ ] Error handling contract is referenced (not restated) by `44_Logging.md` and `54_Security.md`.
 
 ---
 
-## 8. Review Checklist
+## 13. Review Checklist
 
-- [ ] Ensure Python typings are modern (e.g., `Dict`, `Any`, `pd.DataFrame`).
-- [ ] Confirm the `BaseModelPredictor` supports both probabilities and explainability.
+- [ ] No database column-level detail (belongs in `30`).
+- [ ] No REST path detail (belongs in `32`).
+- [ ] All class diagrams valid Mermaid syntax.
 
 ---
 
-## 9. Future Improvements
+## 14. Future Improvements
 
-- Add concrete interface definitions for the Alert Dispatcher once the external notification providers (e.g., SendGrid, Slack) are selected.
+- Add a `FlareModel` ensemble wrapper interface once multiple production models are combined (`60_Future_Enhancements.md` — ensemble forecasting).
 
 ---
 
@@ -157,32 +182,33 @@ class ForecastingService:
 
 ```
 PROJECT CONTEXT:
-You are implementing a documentation-only artifact — this task produces no source code.
-Repository: HeliosAI. This is document 05 of a 61-document specification set.
+HeliosAI dual-band Aditya-L1 flare nowcasting/forecasting platform (ISRO PS-15).
+Document 05 of 61: Low-Level Design — class interfaces, patterns, error/validation contracts.
 
-FOLDER:
-docs/05_Low_Level_Design.md
+FOLDER: docs/05_Low_Level_Design.md
 
-FILES TO PRODUCE:
-None (documentation task). Output exactly one file: docs/05_Low_Level_Design.md
+FILES TO PRODUCE: docs/05_Low_Level_Design.md only.
 
-CODING STANDARDS:
-N/A — Markdown only. Follow the structural template used by all other docs.
+CODING STANDARDS: Markdown with embedded Python interface snippets (type-hinted, PEP 8
+compliant) and Mermaid class diagrams. Interface names (FlareModel, CatalogueRepository,
+NowcastingService) are canonical and must be reused verbatim by 22_Nowcasting.md,
+23_Forecasting.md, 26-28 (ML/DL/Transformer docs), and 56_Coding_Standards.md.
 
-EXPECTED OUTPUT:
-A single self-contained Markdown file outlining class interfaces, repositories, and task signatures.
+EXPECTED OUTPUT: Design pattern table, FlareModel interface class diagram, repository
+pattern class diagram, service layer example, ingestion class diagram, error handling
+contract table, validation rules — exactly as sectioned above.
 
-TESTING:
-Documentation-only — validation is a Markdown lint pass.
+EDGE CASES / VALIDATION: Every interface must have at least one concrete implementer named
+in a later document; every pattern claimed in §4 must have a corresponding diagram.
 
-ACCEPTANCE CRITERIA:
-See §7 above.
+TESTING: Interface-conformance check once implementation exists — every concrete model class
+must satisfy the FlareModel interface's full method signature set.
 
-DELIVERABLES:
-docs/05_Low_Level_Design.md
+ACCEPTANCE CRITERIA: See §12 above.
 
-GIT COMMIT FORMAT:
-docs: add 05_Low_Level_Design.md (class diagrams and interfaces)
+DELIVERABLES: docs/05_Low_Level_Design.md
+
+GIT COMMIT FORMAT: docs: add 05_Low_Level_Design.md (interfaces, patterns, error contracts)
 ```
 
 ---
