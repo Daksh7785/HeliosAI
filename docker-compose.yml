@@ -2,110 +2,108 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: timescale/timescaledb-ha
     environment:
-      POSTGRES_USER: helios
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: heliosai
-    ports:
-      - "5432:5432"
+      - POSTGRES_USER=${POSTGRES_USER:-helios}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secret}
+      - POSTGRES_DB=${POSTGRES_DB:-heliosai}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U helios"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - helios_network
 
   redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    image: redis:alpine
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - helios_network
 
   api:
     build:
       context: .
-      dockerfile: services/api/Dockerfile
-    ports:
-      - "8000:8000"
+      target: runtime
     environment:
-      - HELIOS_DB_URL=postgresql://helios:password@postgres:5432/heliosai
-      - HELIOS_REDIS_URL=redis://redis:6379/0
+      - POSTGRES_HOST=postgres
+      - REDIS_HOST=redis
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./services/api:/app/services/api
-      - ./shared:/app/shared
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - helios_network
 
-  dashboard:
+  dash:
+    image: python:3.12-slim
+    command: ["python", "-m", "src.frontend.app"]
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - helios_network
+
+  streamlit:
+    image: python:3.12-slim
+    command: ["streamlit", "run", "src/frontend/pages/admin/admin_panel.py"]
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - helios_network
+
+  celery-worker:
     build:
       context: .
-      dockerfile: services/dashboard/Dockerfile
+      target: runtime
+    command: ["celery", "-A", "src.tasks", "worker", "--loglevel=info"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - helios_network
+
+  mlflow:
+    image: python:3.12-slim
+    command: ["mlflow", "server", "--host", "0.0.0.0"]
+    volumes:
+      - mlflow_artifacts:/mlflow
+    networks:
+      - helios_network
+
+  nginx:
+    image: nginx:alpine
     ports:
-      - "8050:8050"
-    environment:
-      - HELIOS_API_URL=http://api:8000
+      - "80:80"
     depends_on:
       - api
-    volumes:
-      - ./services/dashboard:/app/services/dashboard
-      - ./shared:/app/shared
-
-  ingestion:
-    build:
-      context: .
-      dockerfile: services/ingestion/Dockerfile
-    environment:
-      - HELIOS_REDIS_URL=redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./services/ingestion:/app/services/ingestion
-      - ./shared:/app/shared
-
-  processing:
-    build:
-      context: .
-      dockerfile: services/processing/Dockerfile
-    environment:
-      - HELIOS_DB_URL=postgresql://helios:password@postgres:5432/heliosai
-      - HELIOS_REDIS_URL=redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./services/processing:/app/services/processing
-      - ./shared:/app/shared
-
-  intelligence:
-    build:
-      context: .
-      dockerfile: services/intelligence/Dockerfile
-    environment:
-      - HELIOS_DB_URL=postgresql://helios:password@postgres:5432/heliosai
-      - HELIOS_REDIS_URL=redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./services/intelligence:/app/services/intelligence
-      - ./shared:/app/shared
+      - dash
+      - streamlit
+    networks:
+      - helios_network
 
 volumes:
   postgres_data:
   redis_data:
+  mlflow_artifacts:
+
+networks:
+  helios_network:
+    driver: bridge
