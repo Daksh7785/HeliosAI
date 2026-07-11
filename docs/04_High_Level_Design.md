@@ -1,88 +1,166 @@
-# 04 — High-Level Design (HLD)
+# 04 — High-Level Design
 
 **HeliosAI** — AI-Powered Space Weather Intelligence Platform
 Document 04 of 61
 
 ---
 
-## 1. Purpose
+## 1. Executive Summary
 
-This document translates the system architecture (`03_System_Architecture.md`) into software design patterns and boundaries. It explains how data moves between the logical blocks and the design choices governing those boundaries.
-
----
-
-## 2. Core Design Patterns
-
-### 2.1 The Pipeline Pattern (Data Flow)
-The core of HeliosAI is an asynchronous Directed Acyclic Graph (DAG) for processing incoming telemetry.
-- **Why:** Telemetry arrives out-of-band and needs sequential processing (parse -> sync -> feature engineer -> predict).
-- **How:** Airflow orchestrates periodic ingestion; Celery handles the fine-grained, event-driven chain that processes individual time-chunks as they arrive.
-
-### 2.2 The Strategy Pattern (ML Models)
-The Forecasting Engine must support swapping out baseline XGBoost models for deep-sequence LSTM or Transformer models.
-- **Why:** Allows continuous research and A/B testing of model families without changing the surrounding inference code.
-- **How:** A unified `BaseModelPredictor` interface requires `predict()` and `explain()` methods, with concrete implementations wrapping scikit-learn or PyTorch models downloaded from the MLflow registry.
-
-### 2.3 The Repository Pattern (Data Access)
-Business logic (e.g., forecasting) must be decoupled from SQL queries.
-- **Why:** Prevents tight coupling to TimescaleDB syntax and simplifies unit testing via mocked repositories.
-- **How:** `src/shared/database/` contains classes (e.g., `FlareEventRepository`, `TelemetryRepository`) that handle all SQLAlchemy ORM operations.
-
-### 2.4 Pub-Sub (Live Updates)
-The dashboard needs real-time updates without aggressive database polling.
-- **Why:** High-frequency polling on TimescaleDB degrades ingestion performance.
-- **How:** When the Intelligence Layer inserts a new forecast into the database, it simultaneously publishes an event to a Redis channel. The FastAPI WebSocket manager subscribes to this channel and pushes the update to the connected Dash clients.
+This document takes each subsystem from `03_System_Architecture.md` and decomposes it one level further — into components and their major internal flows — without dropping to code/class-signature detail (that is `05_Low_Level_Design.md`'s job).
 
 ---
 
-## 3. Subsystem Boundaries & Contracts
+## 2. Purpose
 
-### 3.1 Ingestion <-> Processing
-- **Contract:** Raw telemetry is written to the `raw_telemetry` table. A Celery task payload containing `(start_time, end_time)` is queued.
-- **Isolation:** Processing does not know how to fetch from ISRO; it only knows how to read from the database window provided by the task.
-
-### 3.2 Processing <-> Intelligence
-- **Contract:** Engineered features are written to the `feature_store` table. A Celery task payload containing `(feature_snapshot_id)` is queued.
-- **Isolation:** The Intelligence models assume clean, synced, `NaN`-free data. All interpolation logic is strictly encapsulated in the Processing layer.
-
-### 3.3 Intelligence <-> Serving
-- **Contract:** Predictions and SHAP values are written to `forecasts` and `explanations` tables. A Redis Pub/Sub message is broadcast with a summarized JSON payload.
-- **Isolation:** The API never runs ML inference directly. It only queries the results from the database or passes through the Redis stream.
+Bridge the gap between "six subsystems" (architecture) and "actual modules a developer opens a file for" (low-level design), giving each subsystem a concrete component map.
 
 ---
 
-## 4. Error Handling & Resilience
+## 3. Scope
 
-- **Data Gaps:** Handled by the Processing layer. Small gaps are interpolated; large gaps trigger a "Quarantine" flag, preventing the Intelligence layer from making unreliable forecasts.
-- **Component Failure:** If the MLflow registry is down, the Intelligence layer falls back to a locally cached model artifact. If Redis is down, WebSockets fail but REST API polling acts as a degraded fallback.
-
----
-
-## 5. Interfaces to Other Documents
-
-- **`05_Low_Level_Design.md`** — translates these patterns into specific Python classes and interfaces.
-- **`30_Database_Design.md`** — defines the tables referenced in the boundaries section.
+Component decomposition per subsystem, major internal data flows, and component-level responsibilities. Excludes function signatures, class attributes, and database columns (all in `05`).
 
 ---
 
-## 6. Acceptance Criteria
+## 4. Ingestion Subsystem — Components
 
-- [ ] Clear delineation of responsibilities between components (no "God objects").
-- [ ] Explicit identification of the design patterns used (Pipeline, Strategy, Repository, Pub-Sub).
-- [ ] Failure modes and degraded states are defined.
+| Component | Responsibility |
+|---|---|
+| Fetcher/Downloader Service | Authenticates to PRADAN (or reads manual-drop directory), retrieves raw files |
+| Format Parser | Parses FITS/CDF/CSV into an internal raw-record representation |
+| Raw Data Validator | Checksum + schema validation before handoff to Processing |
+
+```mermaid
+flowchart LR
+    A[Fetcher/Downloader] --> B[Format Parser]
+    B --> C[Raw Data Validator]
+    C -->|valid| D[Handoff to Processing]
+    C -->|invalid| E[Quarantine + Alert]
+```
 
 ---
 
-## 7. Review Checklist
+## 5. Processing Subsystem — Components
 
-- [ ] Does not contain specific SQL queries or Python code snippets (belongs in `05`).
-- [ ] Consistent with the 5-layer architecture in `03`.
+| Component | Responsibility |
+|---|---|
+| Time Synchronization Engine | Spacecraft time → UTC conversion |
+| Noise Filter / Background Subtractor | Instrument-specific background removal |
+| Feature Engineering Engine | Hardness ratio, gradients, wavelet energy computation |
+| Cross-Band Fusion Layer | Aligns SoLEXS and HEL1OS series onto a shared timeline |
 
 ---
 
-## 8. Future Improvements
+## 6. Intelligence Subsystem — Components
 
-- Map out an Event Sourcing pattern if the system requires full replayability of the data pipeline state over time.
+| Component | Responsibility |
+|---|---|
+| Nowcasting Engine | Per-band detection + confidence-weighted fusion |
+| Forecasting Engine | Rolling-window probability prediction |
+| Explainable AI Layer | SHAP / attention-weight generation per trigger |
+| Master Catalogue Builder | Applies promotion rules (confirmed vs. tentative) |
+
+---
+
+## 7. Data & Catalogue Subsystem — Components
+
+| Component | Responsibility |
+|---|---|
+| TimescaleDB Hypertable Layer | Light-curve and feature storage |
+| Catalogue Tables | Flare events, forecasts, alerts |
+| MLflow Registry | Model versions, experiment runs |
+| Redis Cache/Queue | Feature cache, Celery broker |
+
+---
+
+## 8. Serving Subsystem — Components
+
+| Component | Responsibility |
+|---|---|
+| FastAPI REST Router | CRUD/read endpoints |
+| FastAPI WebSocket Handler | Live push channels |
+| Auth Service | JWT issuance/validation |
+| Alert Dispatcher | Fan-out to WebSocket, webhook, email |
+
+---
+
+## 9. Experience Subsystem — Components
+
+| Component | Responsibility |
+|---|---|
+| Dash Dashboard | Live light curves + alert banner |
+| Catalogue Explorer | Browsing/filtering historical events |
+| Alert Console | Acknowledge/annotate alerts |
+| Admin Panel (Streamlit) | User/threshold/ingestion management |
+
+---
+
+## 10. End-to-End Component Flow (Nowcast Path)
+
+```mermaid
+sequenceDiagram
+    participant Fetcher
+    participant Parser
+    participant Validator
+    participant TimeSync
+    participant Features
+    participant Nowcast
+    participant Catalogue
+    participant Dispatcher
+    participant Dashboard
+
+    Fetcher->>Parser: raw file
+    Parser->>Validator: parsed record
+    Validator->>TimeSync: valid record
+    TimeSync->>Features: UTC-aligned series
+    Features->>Nowcast: feature window
+    Nowcast->>Catalogue: candidate event
+    Catalogue->>Dispatcher: promoted event
+    Dispatcher->>Dashboard: alert push
+```
+
+---
+
+## 11. State Diagram — Component-Level Data Quality
+
+```mermaid
+stateDiagram-v2
+    [*] --> Raw
+    Raw --> Validated: checksum + schema pass
+    Raw --> Quarantined: validation fails
+    Validated --> Synchronized: time-sync applied
+    Synchronized --> FeatureReady: features computed
+    Quarantined --> [*]
+    FeatureReady --> [*]
+```
+
+---
+
+## 12. Research Notes
+
+Component boundaries were chosen to align 1:1 with future Antigravity module prompts (`61_Antigravity_Master_Prompt.md`), so each component here maps cleanly to one implementation branch.
+
+---
+
+## 13. Acceptance Criteria
+
+- [ ] Every component listed has exactly one owning subsystem.
+- [ ] Every component appears in at least one diagram.
+- [ ] No function-level or schema-level detail present (deferred to `05`).
+
+---
+
+## 14. Review Checklist
+
+- [ ] Cross-checked against `03_System_Architecture.md`'s subsystem responsibility table for consistency.
+- [ ] All Mermaid diagrams validated.
+
+---
+
+## 15. Future Improvements
+
+- Add a component-level dependency matrix once implementation begins, to catch accidental coupling early.
 
 ---
 
@@ -90,32 +168,30 @@ The dashboard needs real-time updates without aggressive database polling.
 
 ```
 PROJECT CONTEXT:
-You are implementing a documentation-only artifact — this task produces no source code.
-Repository: HeliosAI. This is document 04 of a 61-document specification set.
+HeliosAI dual-band Aditya-L1 flare nowcasting/forecasting platform (ISRO PS-15).
+Document 04 of 61: High-Level Design — component decomposition per subsystem.
 
-FOLDER:
-docs/04_High_Level_Design.md
+FOLDER: docs/04_High_Level_Design.md
 
-FILES TO PRODUCE:
-None (documentation task). Output exactly one file: docs/04_High_Level_Design.md
+FILES TO PRODUCE: docs/04_High_Level_Design.md only.
 
-CODING STANDARDS:
-N/A — Markdown only. Follow the structural template used by all other docs.
+CODING STANDARDS: Markdown; component names must be reused verbatim (not renamed) in
+05_Low_Level_Design.md and the corresponding per-module Antigravity prompts.
 
-EXPECTED OUTPUT:
-A single self-contained Markdown file outlining the HLD, patterns, and boundaries.
+EXPECTED OUTPUT: Component tables per subsystem, end-to-end sequence diagram for the
+nowcast path, data-quality state diagram — matching structure above.
 
-TESTING:
-Documentation-only — validation is a Markdown lint pass.
+EDGE CASES / VALIDATION: Every component must map to exactly one subsystem from
+03_System_Architecture.md; no orphaned or dual-owned components.
 
-ACCEPTANCE CRITERIA:
-See §6 above.
+TESTING: Structural review — every component referenced in the sequence diagram must also
+appear in its subsystem's component table.
 
-DELIVERABLES:
-docs/04_High_Level_Design.md
+ACCEPTANCE CRITERIA: See §13 above.
 
-GIT COMMIT FORMAT:
-docs: add 04_High_Level_Design.md (patterns and subsystem boundaries)
+DELIVERABLES: docs/04_High_Level_Design.md
+
+GIT COMMIT FORMAT: docs: add 04_High_Level_Design.md (component decomposition)
 ```
 
 ---
