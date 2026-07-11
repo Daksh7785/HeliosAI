@@ -1,47 +1,23 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field
 from datetime import datetime
-from enum import Enum
-from typing import List
+from typing import Optional
 
-class Instrument(str, Enum):
-    SOLEXS = "solexs"
-    HEL1OS = "hel1os"
+class RawLightCurveRow(BaseModel):
+    timestamp: datetime = Field(..., description="Observation timestamp in UTC")
+    flux: float = Field(..., description="Measured flux value")
+    energy_band: str = Field(..., description="Energy band (e.g., 'soft', 'hard')")
+    instrument: str = Field(..., description="Instrument name ('solexs' or 'hel1os')")
+    quality_flag: int = Field(default=0, description="0 = good, >0 = error/anomaly code")
 
-class RawLightCurvePoint(BaseModel):
-    instrument: Instrument
-    spacecraft_time: float          # raw onboard clock value
-    flux: float
-    energy_channel: str
-    quality_flag: int
+class ProcessedLightCurveRow(BaseModel):
+    timestamp: datetime = Field(..., description="Observation timestamp in UTC")
+    flux: float = Field(..., description="Background-subtracted flux")
+    flux_raw: float = Field(..., description="Original raw flux")
+    background_level: float = Field(..., description="Estimated background level")
+    energy_band: str = Field(..., description="Energy band")
+    instrument: str = Field(..., description="Instrument name")
 
-    @field_validator("flux")
-    @classmethod
-    def flux_non_negative(cls, v: float) -> float:
-        if v < 0:
-            raise ValueError("flux must be non-negative")
-        return v
-
-class RawLightCurveBatch(BaseModel):
-    instrument: Instrument
-    source_file: str
-    ingested_at: datetime
-    points: List[RawLightCurvePoint]
-    correlation_id: str
-
-class ProcessedLightCurvePoint(BaseModel):
-    instrument: Instrument
-    utc_timestamp: datetime
-    flux_cleaned: float
-    background_level: float
-    data_quality_flags: List[str]
-
-class EngineeredFeatureRow(BaseModel):
-    utc_timestamp: datetime
-    solexs_flux: float
-    hel1os_flux: float
-    hardness_ratio: float
-    flux_gradient_solexs: float
-    flux_gradient_hel1os: float
-    wavelet_energy_solexs: float
-    wavelet_energy_hel1os: float
-    data_snapshot_id: str
+class FusedTelemetryRow(BaseModel):
+    timestamp: datetime = Field(..., description="Synchronized observation timestamp in UTC")
+    solexs_flux: float = Field(..., description="Soft X-ray flux from SoLEXS")
+    hel1os_flux: float = Field(..., description="Hard X-ray counts from HEL1OS")
