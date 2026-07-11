@@ -1,40 +1,85 @@
-# 51 — Kubernetes Architecture
+# 51 — Kubernetes
 
-> **Document 51 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Defines the container orchestration layer.
-
----
-
-## Table of Contents
-
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [Cluster Topology](#cluster-topology)
-3. [Autoscaling Strategy](#autoscaling-strategy)
-4. [Ingress and Routing](#ingress-and-routing)
+**HeliosAI** — AI-Powered Space Weather Intelligence Platform
+Document 51 of 61
 
 ---
 
-## Purpose of This Document
+## 1. Purpose
 
-Once Terraform (`50_Infrastructure.md`) provisions the underlying virtual machines, Kubernetes handles deploying, scaling, and healing the HeliosAI microservices.
+Describes the **optional** scale-out deployment path for HeliosAI, for organizations moving beyond a single-host Docker Compose deployment (e.g., multi-org hosting, higher availability, larger ingestion/training workloads).
 
-## Cluster Topology
+---
 
-The system is deployed across multiple Namespaces:
-- `helios-core`: The FastAPI backend, Celery workers, and the Intelligence Subsystem consumers.
-- `helios-data`: Airflow scheduler and workers for batch ingestion.
-- `helios-mlops`: The MLflow Tracking Server.
-- `helios-frontend`: The Dash application.
+## 2. When Kubernetes Is Warranted
 
-## Autoscaling Strategy
+Per the README's Orchestration row ("optional, scale-out"), Kubernetes is **not** the default deployment path — Docker Compose remains the primary, documented quickstart. Kubernetes is recommended when:
+- Multiple research organizations are hosted on shared infrastructure (namespace isolation).
+- Celery worker/Airflow DAG concurrency needs exceed single-host capacity.
+- High-availability requirements emerge beyond the research/decision-support scope noted in the README's Out of Scope section.
 
-- **Horizontal Pod Autoscaler (HPA):** Scales the `services/api/` and `services/dashboard/` deployments based on CPU/Memory usage (e.g., during a major solar storm when traffic spikes).
-- **KEDA (Kubernetes Event-driven Autoscaling):** Scales the Celery worker pods based on the length of the Redis task queues, ensuring heavy processing tasks (like Explainability generation) don't bottleneck.
+---
 
-## Ingress and Routing
+## 3. Manifest Structure
 
-An NGINX Ingress Controller routes external traffic:
-- `api.heliosai.org` -> `services/api/`
-- `dashboard.heliosai.org` -> `services/dashboard/`
-- `mlflow.internal.heliosai.org` -> MLflow Server (VPN restricted).
+```
+infra/k8s/
+├── namespace.yaml
+├── configmaps/
+├── secrets/                # sealed-secrets or external-secrets references, never plaintext
+├── deployments/
+│   ├── api.yaml
+│   ├── dash.yaml
+│   ├── streamlit.yaml
+│   ├── celery-worker.yaml
+│   └── mlflow.yaml
+├── statefulsets/
+│   ├── postgres-timescaledb.yaml
+│   └── redis.yaml
+├── services/
+├── ingress.yaml
+└── hpa/                     # HorizontalPodAutoscaler definitions
+```
 
-**Next document:** `52_CI_CD.md`
+---
+
+## 4. Scaling Policy
+
+| Component | Scaling Approach |
+|---|---|
+| `api` (FastAPI) | HPA on CPU + request-latency custom metric |
+| `celery-worker` | HPA on Redis queue-depth custom metric (KEDA-based, scales toward zero during quiet-Sun periods) |
+| `dash` / `streamlit` | HPA on CPU/connection count |
+| `postgres-timescaledb` | StatefulSet, vertical scaling preferred over horizontal for the primary; read replicas optional for analytics load (`43_Analytics.md`) |
+
+---
+
+## 5. Reliability Patterns
+
+- Liveness/readiness probes map directly to the `/healthz` / `/readyz` endpoints defined in `45_Monitoring.md`.
+- `PodDisruptionBudget`s on `api` and `dash` prevent simultaneous eviction of all replicas during node maintenance.
+- Rolling update strategy (`maxUnavailable: 0`) ensures the nowcasting alert path is never fully offline during a deploy.
+
+---
+
+## 6. Secrets on Kubernetes
+
+Secrets are managed via `external-secrets` (syncing from Vault/cloud secrets manager) or `sealed-secrets`, never as plaintext `Secret` manifests committed to the repository — consistent with `54_Security.md`.
+
+---
+
+## 7. Relationship to Docker Compose Path
+
+The same container images built for Docker Compose (`50_Docker.md`) are reused unchanged for Kubernetes manifests — Kubernetes is a deployment-orchestration choice, not a separate build target, keeping the two paths from diverging.
+
+---
+
+## 8. Interfaces to Other Documents
+
+- **`49_Deployment.md`**, **`50_Docker.md`** — the deployment/image foundation this extends.
+- **`45_Monitoring.md`** — health probe contracts.
+- **`54_Security.md`** — secrets and network policy.
+
+---
+
+**Next document:** `52_CI_CD.md` — say **NEXT** to continue.
