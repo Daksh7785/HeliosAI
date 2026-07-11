@@ -1,44 +1,73 @@
 # 31 — Backend Architecture
 
-> **Document 31 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Defines the Serving Layer's macro-architecture.
+> **Document 31 of 61.** First document of the Serving Subsystem (see `README.md` → System Overview). Builds on the schema from `30_Database_Design.md`. Precedes `32_API_Design.md`, `33_WebSocket_System.md`, `34_Background_Jobs.md`, `35_Authentication.md`, and `36_Authorization.md`.
 
 ---
 
 ## Table of Contents
-
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [Serving Layer Responsibilities](#serving-layer-responsibilities)
-3. [Technology Stack](#technology-stack)
-4. [Service Interactions](#service-interactions)
-5. [Concurrency and Scaling](#concurrency-and-scaling)
+1. [Purpose](#purpose)
+2. [Layered Architecture](#layered-architecture)
+3. [Service Boundaries](#service-boundaries)
+4. [Request Lifecycle](#request-lifecycle)
+5. [Technology Choices Recap](#technology-choices-recap)
+6. [Revision History](#revision-history)
 
 ---
 
-## Purpose of This Document
+## Purpose
 
-This document defines the `services/api/` module. It bridges the gap between the intelligence engines (Nowcasting and Forecasting) and the human-facing Experience Layer (Dashboard and CLI).
+Defines the overall FastAPI-based backend structure that `32`–`36` will each detail a slice of, ensuring those documents share one consistent service boundary picture.
 
-## Serving Layer Responsibilities
+---
 
-The Backend Architecture is responsible for:
-- Providing secure, versioned REST endpoints (`32_API_Design.md`).
-- Broadcasting real-time telemetry and flare alerts to connected clients (`33_WebSocket_System.md`).
-- Managing user authentication and role-based access (`35_Authentication.md`, `36_Authorization.md`).
+## Layered Architecture
 
-## Technology Stack
+Standard layered separation: **routers** (FastAPI path operations) → **services** (business logic: catalogue queries, forecast retrieval, alert dispatch) → **repositories** (SQLAlchemy-based data access against the schema in `30_Database_Design.md`) → **database**. This separation keeps API contract changes (`32`) decoupled from schema changes (`30`).
 
-- **Framework:** FastAPI (Python). Chosen for native async support, automated OpenAPI documentation generation, and high performance.
-- **ASGI Server:** Uvicorn, running behind Gunicorn workers for production stability.
-- **ORM:** SQLAlchemy 2.0 (asyncio mode) interacting with TimescaleDB.
+---
 
-## Service Interactions
+## Service Boundaries
 
-The API is strictly a **consumer** of data. It does not run inference or ingestion tasks directly.
-- It queries the database populated by `services/intelligence/`.
-- If an on-demand task is requested (e.g., a manual data ingestion run triggered via CLI), the API dispatches a message to the Celery broker, which is picked up by `services/ingestion/` or `services/processing/`.
+| Service | Responsibility | Consumes |
+|---|---|---|
+| Catalogue Service | Query/filter nowcast events | `nowcast_events` table |
+| Forecast Service | Query/serve forecast probabilities | `forecasts`, `lead_time_metrics` |
+| Alert Service | Dispatch webhook/email on new triggers | `nowcast_events`, `forecasts` (via Celery, per `34`) |
+| Auth Service | Authentication/authorization | `users`/`auth` tables (per `35`, `36`) |
+| Explainability Service | Serve attribution/attention payloads | `29_Explainable_AI.md`'s output contract |
 
-## Concurrency and Scaling
+---
 
-Because FastAPI natively supports asynchronous I/O (`async def`), the backend can handle thousands of concurrent WebSocket connections and slow database queries without blocking the main event loop. Horizontal scaling is achieved via Kubernetes deployments (`51_Kubernetes.md`) replicating the API pods behind a LoadBalancer.
+## Request Lifecycle
 
-**Next document:** `32_API_Design.md`
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Router as FastAPI Router
+    participant Svc as Service Layer
+    participant Repo as Repository (SQLAlchemy)
+    participant DB as TimescaleDB
+
+    Client->>Router: Request (REST or WebSocket)
+    Router->>Router: Auth check (35, 36)
+    Router->>Svc: Delegate business logic
+    Svc->>Repo: Query/command
+    Repo->>DB: SQL (via SQLAlchemy/Alembic-managed schema)
+    DB-->>Repo: Rows
+    Repo-->>Svc: Domain objects
+    Svc-->>Router: Response payload
+    Router-->>Client: JSON / WS push
+```
+
+---
+
+## Technology Choices Recap
+
+Per `07_Tech_Stack.md`: FastAPI + Pydantic for request/response validation, Uvicorn/Gunicorn for serving, SQLAlchemy 2.x + Alembic for ORM/migrations against the `30_Database_Design.md` schema. No architectural deviation from the stack already established.
+
+---
+
+## Revision History
+| Version | Date | Author | Notes |
+|---|---|---|---|
+| 0.1 | 2026-07-12 | HeliosAI Documentation | Initial Backend Architecture — layered design, service boundaries, request lifecycle |
