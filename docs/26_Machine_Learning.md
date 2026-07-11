@@ -1,43 +1,61 @@
-# 26 — Machine Learning (Baseline Models)
+# 26 — Machine Learning
 
-> **Document 26 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Details the baseline classical machine learning models used in the Forecasting Engine (`23_Forecasting.md`).
+> **Document 26 of 61.** Details the classical ML baseline layer of the Forecasting Engine (`23_Forecasting.md`), the first model generation in the progression described there. Precedes `27_Deep_Learning.md`.
 
 ---
 
 ## Table of Contents
-
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [Why Baseline Models?](#why-baseline-models)
-3. [Model Architectures](#model-architectures)
-4. [Feature Selection](#feature-selection)
-5. [Training Pipeline](#training-pipeline)
+1. [Purpose](#purpose)
+2. [Model Choices](#model-choices)
+3. [Feature Input](#feature-input)
+4. [Class Imbalance Handling](#class-imbalance-handling)
+5. [Hyperparameter Strategy](#hyperparameter-strategy)
+6. [Evaluation Protocol](#evaluation-protocol)
+7. [Revision History](#revision-history)
 
 ---
 
-## Purpose of This Document
+## Purpose
 
-This document specifies the classical machine learning models used for flare forecasting. These models establish the performance baseline against which deeper neural networks (`27_Deep_Learning.md`, `28_Transformer_Models.md`) are evaluated.
+Specifies the gradient-boosted-tree baseline that ships first in Phase 4 (per `08_Development_Roadmap.md`), establishing the benchmark every subsequent deep-learning generation must beat before being adopted.
 
-## Why Baseline Models?
+---
 
-Before deploying complex sequence models, HeliosAI relies on gradient-boosted trees. They provide:
-- **Fast Training and Inference:** Ideal for rapid prototyping and deployment on constrained hardware.
-- **Inherent Explainability:** Built-in feature importance scores align seamlessly with the Explainable AI requirements (`29_Explainable_AI.md`).
-- **Robustness:** Tree-based models handle tabular feature sets and missing data exceptionally well.
+## Model Choices
 
-## Model Architectures
+- **XGBoost, LightGBM, CatBoost** — evaluated in parallel on identical folds; the best performer per flare class (not necessarily the same algorithm for every class) becomes the baseline reference.
+- Chosen for: fast iteration, native handling of tabular engineered features (no sequence modeling needed for this generation), and built-in feature importance supporting `29_Explainable_AI.md`'s SHAP integration.
 
-The forecasting engine implements three primary baseline models:
-1. **XGBoost:** The primary workhorse for classification tasks.
-2. **LightGBM:** Used for faster training iterations and lower memory footprints.
-3. **CatBoost:** Leveraged if categorical features (e.g., active region classifications, if integrated later) become significant.
+---
 
-## Feature Selection
+## Feature Input
 
-These models consume aggregated statistical features derived from the rolling window (e.g., max, min, mean, variance, and gradient of flux and hardness ratio over the last 60 minutes) rather than raw time-series steps.
+Consumes the full per-band, cross-band, and temporal/precursor feature table from `21_Feature_Engineering.md`, flattened into a single feature vector per prediction time point (in contrast to deep sequence models in `27`/`28`, which consume the raw windowed sequence).
 
-## Training Pipeline
+---
 
-The training pipeline integrates directly with MLflow (`44_MLOps.md`) to log hyperparameters, metrics, and serialized model artifacts. 
+## Class Imbalance Handling
 
-**Next document:** `27_Deep_Learning.md`
+Given the rarity of high-class flares (Risk R2, `10_Risk_Assessment.md`): class weighting, focal-loss-style objective adaptation where supported, and SMOTE-style oversampling on the tabular feature space (per `README.md` → Evaluation Criteria Alignment). Oversampling is applied only to training folds, never to validation/test folds, to avoid inflating reported performance.
+
+---
+
+## Hyperparameter Strategy
+
+Bayesian or grid search per flare class, tracked in MLflow (per `24_AI_Architecture.md`'s shared registry), with the search space and final chosen parameters both logged for reproducibility.
+
+---
+
+## Evaluation Protocol
+
+- Time-based (not random) train/validation/test splits, to avoid leaking future information into training — critical for a forecasting task.
+- Metrics: per-class precision/recall (TPR/FAR per `README.md` → Evaluation Criteria Alignment), calibration curves, and empirical lead time (per `23_Forecasting.md`) computed identically to how deep models will later be evaluated, ensuring apples-to-apples comparison in Phase 4.
+
+**Next document:** `27_Deep_Learning.md` — say **NEXT** to continue.
+
+---
+
+## Revision History
+| Version | Date | Author | Notes |
+|---|---|---|---|
+| 0.1 | 2026-07-12 | HeliosAI Documentation | Initial Machine Learning baseline spec — model choice, imbalance handling, evaluation protocol |

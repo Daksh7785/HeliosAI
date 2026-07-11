@@ -1,61 +1,80 @@
-# 23 — Forecasting Engine
+# 23 — Forecasting
 
-> **Document 23 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Defines Phase 4 of the system, consuming the fused feature vector from `21_Feature_Engineering.md` and the master catalogue from `22_Nowcasting.md`.
+> **Document 23 of 61.** Second Intelligence Subsystem document. Trains against the master catalogue produced by `22_Nowcasting.md`, using temporal/precursor features from `21_Feature_Engineering.md`. Feeds `26_Machine_Learning.md`, `27_Deep_Learning.md`, and `28_Transformer_Models.md`.
 
 ---
 
 ## Table of Contents
-
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [What is Forecasting in HeliosAI?](#what-is-forecasting-in-heliosai)
-3. [Precursor Feature Window](#precursor-feature-window)
-4. [Forecasting Models Architecture](#forecasting-models-architecture)
-5. [Lead-Time Reconciler](#lead-time-reconciler)
-6. [Training and Evaluation Strategy](#training-and-evaluation-strategy)
-7. [Output Contract](#output-contract)
+1. [Purpose](#purpose)
+2. [Problem Framing](#problem-framing)
+3. [Training Label Construction](#training-label-construction)
+4. [Model Progression](#model-progression)
+5. [Lead-Time Computation](#lead-time-computation)
+6. [Calibration](#calibration)
+7. [Forecasting Pipeline Diagram](#forecasting-pipeline-diagram)
+8. [Revision History](#revision-history)
 
 ---
 
-## Purpose of This Document
+## Purpose
 
-This document outlines the design and implementation of the **Forecasting Engine**. While the nowcasting engine detects flares as they happen, the forecasting engine is responsible for predicting flares *before* they occur, leveraging the hard X-ray precursors detected by HEL1OS alongside the soft X-ray baseline from SoLEXS.
+Specifies the forecasting capability required by the Problem Statement: predicting flare probability over a rolling future horizon, with **empirically quantified** lead time — the central distinction from nowcasting.
 
-## What is Forecasting in HeliosAI?
+---
 
-Forecasting involves predicting the probability of a solar flare (parameterized by target class and horizon) using historical data windows. Specifically:
-- **Horizon Options:** Short-term (e.g., +15m, +30m) to medium-term (+60m).
-- **Output:** A calibrated probability score [0.0 - 1.0] for reaching a specific flare class threshold (e.g., M-class or X-class) within the specified horizon.
+## Problem Framing
 
-## Precursor Feature Window
+At each time point, given the rolling lookback window of temporal/precursor features (`21_Feature_Engineering.md`), predict: probability of a flare (and its likely class) occurring within the next N minutes (N = 15/30/60, configurable per `README.md`).
 
-The input to the forecasting models is a **rolling feature window** (e.g., T-60m to T) constructed from the engineered features derived in `21_Feature_Engineering.md`. Key features include:
-- Temporal gradients of SoLEXS flux.
-- Impulsive spike indicators from HEL1OS.
-- **Spectral Hardness Ratio** (HEL1OS flux / SoLEXS flux) - the primary precursor metric.
-- Wavelet-domain energy distributions.
+---
 
-## Forecasting Models Architecture
+## Training Label Construction
 
-HeliosAI employs a progressive modeling approach, moving from interpretable baselines to complex sequence models:
+Positive labels are derived from the master catalogue (`22_Nowcasting.md`): a time point is labeled positive if a promoted (or, optionally, tentative) event's peak falls within N minutes forward. Class-stratified labeling preserves A/B/C/M/X-equivalent bins for the minority-class handling described in `README.md` → Evaluation Criteria Alignment.
 
-1. **Baseline Models (`26_Machine_Learning.md`):** Gradient-Boosted Trees (XGBoost, LightGBM, CatBoost) to establish a fast, interpretable performance floor.
-2. **Deep Sequence Models (`27_Deep_Learning.md`):** Recurrent architectures (LSTM, GRU) to capture long-term temporal dependencies in the light curves.
-3. **Transformer Models (`28_Transformer_Models.md`):** State-of-the-art attention-based models (e.g., Temporal Fusion Transformers) for optimal performance.
+---
 
-## Lead-Time Reconciler
+## Model Progression
 
-To empirically validate the models' predictive power, the **Lead-Time Reconciler** module continuously compares forecasted event probabilities against the *actual* events verified by the Nowcasting Engine (`22_Nowcasting.md`).
-- Metric: `predicted_trigger_ts` vs `actual_peak_ts`.
-- Goal: Quantify and track the true early-warning time provided by the combined HEL1OS/SoLEXS data.
+1. **Baselines** — XGBoost/LightGBM/CatBoost on engineered features; fast, interpretable, shipped first (per `08_Development_Roadmap.md`'s baselines-before-deep-models philosophy).
+2. **Deep sequence models** — LSTM/GRU as a mid-tier benchmark.
+3. **Transformer-family** — Informer, PatchTST, Temporal Fusion Transformer, for longer-range precursor patterns (detailed in `28_Transformer_Models.md`).
 
-## Training and Evaluation Strategy
+Each generation is evaluated against the same held-out historical events before being considered a replacement for the prior generation, not assumed superior.
 
-- **Training Labels:** Provided exclusively by the historical Master Flare Catalogue generated in Phase 3.
-- **Data Splitting:** Chronological split (not random) to prevent data leakage in time-series validation.
-- **Metrics:** Precision, Recall, F1-Score, Brier Score (for probability calibration), and empirical lead time.
+---
 
-## Output Contract
+## Lead-Time Computation
 
-The Forecasting Engine persists its predictions to the database (`30_Database_Design.md`) and exposes them via the Serving Layer (`32_API_Design.md`) for consumption by the Dashboard (`39_Dashboard.md`).
+For every forecast that precedes an actual catalogued event: `lead_time = actual_peak_ts − predicted_trigger_ts`, computed only after ground truth is known, logged as a first-class MLflow metric per prediction (per `README.md` → Evaluation Criteria Alignment). This addresses Risk R7 in `10_Risk_Assessment.md` directly — lead time is never asserted from model confidence alone.
 
-**Next document:** `24_CLI.md`
+---
+
+## Calibration
+
+Raw model outputs are calibrated (e.g., Platt scaling / isotonic regression) per flare class, so a reported "70% probability" is empirically meaningful, and thresholds are tuned on precision-recall curves per class rather than a single global cutoff — necessary given the class imbalance discussed in Risk R2 (`10_Risk_Assessment.md`).
+
+---
+
+## Forecasting Pipeline Diagram
+
+```mermaid
+flowchart LR
+    A[Temporal/Precursor Features - 21] --> B[Baseline: XGBoost/LightGBM]
+    A --> C[Deep: LSTM/GRU]
+    A --> D[Transformer-family: Informer/PatchTST/TFT]
+    B --> E[Calibrated Probability + Class]
+    C --> E
+    D --> E
+    E --> F[Lead-Time Computation vs Master Catalogue]
+    F --> G[MLflow Logging]
+```
+
+**Next document:** `24_AI_Architecture.md` — say **NEXT** to continue.
+
+---
+
+## Revision History
+| Version | Date | Author | Notes |
+|---|---|---|---|
+| 0.1 | 2026-07-12 | HeliosAI Documentation | Initial Forecasting spec — labeling, model progression, lead-time, calibration |

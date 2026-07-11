@@ -1,66 +1,91 @@
-# 22 — Nowcasting Engine
+# 22 — Nowcasting
 
-> **Document 22 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Defines Phase 3 of the system, consuming the fused feature vector from `21_Feature_Engineering.md` and feeding into `23_Forecasting.md` and `30_Database_Design.md`.
+> **Document 22 of 61.** First document of the Intelligence Subsystem (see `README.md` → System Overview). Consumes the feature set from `21_Feature_Engineering.md`; its output (the master flare catalogue) feeds `23_Forecasting.md`'s training labels and `29_Explainable_AI.md`.
 
 ---
 
 ## Table of Contents
-
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [What is Nowcasting in HeliosAI?](#what-is-nowcasting-in-heliosai)
-3. [Detector Architecture](#detector-architecture)
-4. [Cross-Band Fusion Gate](#cross-band-fusion-gate)
-5. [Flare Class Assignment](#flare-class-assignment)
-6. [Master Catalogue Promotion](#master-catalogue-promotion)
-7. [Testing and Validation](#testing-and-validation)
+1. [Purpose](#purpose)
+2. [Per-Band Detection](#per-band-detection)
+3. [Event Characterization](#event-characterization)
+4. [Cross-Band Confidence Fusion](#cross-band-confidence-fusion)
+5. [Master Catalogue Promotion Rules](#master-catalogue-promotion-rules)
+6. [Nowcasting Pipeline Diagram](#nowcasting-pipeline-diagram)
+7. [Latency Budget](#latency-budget)
+8. [Revision History](#revision-history)
 
 ---
 
-## Purpose of This Document
+## Purpose
 
-This document describes the **Nowcasting Engine**, which serves as the real-time event detection layer. While the feature engineering layer transforms light curves, the nowcasting engine translates those features into discrete, actionable solar flare events.
+Implements the nowcasting algorithm summarized in `README.md` → Core Algorithms Summary: independent per-band detection, fused into a confidence-scored master catalogue, satisfying the Problem Statement's requirement to detect flares "as they occur."
 
-## What is Nowcasting in HeliosAI?
+---
 
-Nowcasting refers to the detection of a flare *as it happens* or *immediately after it begins*. In HeliosAI, this involves:
-- Rapid threshold and changepoint detection.
-- Peak, rise, and decay phase estimation.
-- Assignment of standard flare classes (A, B, C, M, X).
-- Producing a labeled event catalogue used for downstream forecasting training.
+## Per-Band Detection
 
-## Detector Architecture
+Two independent detectors run on each of SoLEXS and HEL1OS (per `20_Signal_Processing.md`'s Changepoint-Ready Signal Conditioning):
 
-HeliosAI uses independent detectors for SoLEXS and HEL1OS before fusing the results:
+1. **Threshold/peak-finding detector** — flags a candidate when background-subtracted flux crosses a payload-specific, noise-informed threshold.
+2. **Changepoint detector** — flags a statistically significant shift in local mean/slope, catching low-class flares that may not clear a fixed threshold.
 
-1. **SoLEXS Detector:** Focuses on soft X-ray flux thresholds and gradients.
-2. **HEL1OS Detector:** Focuses on hard X-ray impulsive spikes.
+Both run in parallel per band; a candidate is raised if **either** fires, avoiding a single-method blind spot.
 
-Both detectors utilize:
-- **CUSUM (Cumulative Sum) algorithms** for rapid changepoint detection.
-- **Dynamic Thresholding** based on the rolling background calculated in `18_Data_Preprocessing.md`.
+---
 
-## Cross-Band Fusion Gate
+## Event Characterization
 
-Detections from individual bands are passed through a Cross-Band Fusion Gate:
-- **Confirmed Events:** Detected concurrently in both SoLEXS and HEL1OS (high confidence).
-- **Tentative Events:** Detected only in SoLEXS (e.g., low-energy A/B class flares where hard X-ray emission is minimal).
-- **Anomalies:** Detected only in HEL1OS without corresponding SoLEXS activity (often flagged as potential noise or particle hits).
+For each candidate: peak time and magnitude, rise time (onset → peak), decay time (e-folding, peak → background return), and GOES-equivalent class assignment (SoLEXS-based, per `15_SoLEXS.md`). HEL1OS candidates are characterized the same way but are not used for class assignment (per `16_HEL1OS.md`).
 
-## Flare Class Assignment
+---
 
-Flare classes are assigned strictly based on the GOES-equivalent soft X-ray peak flux measured by SoLEXS. The engine maps SoLEXS peak flux limits to the standard log-scale classes:
-- A-class: < 10^-7 W/m^2
-- B-class: 10^-7 to 10^-6 W/m^2
-- C-class: 10^-6 to 10^-5 W/m^2
-- M-class: 10^-5 to 10^-4 W/m^2
-- X-class: >= 10^-4 W/m^2
+## Cross-Band Confidence Fusion
 
-## Master Catalogue Promotion
+A confidence score combines: (a) whether both bands independently raised a candidate within a tolerance window (`cross_band_agreement_flag`, per `21_Feature_Engineering.md`), (b) each band's individual detection strength, and (c) hardness ratio behavior consistent with a genuine flare.
 
-Once an event's decay phase concludes, the fully parameterized event (start, peak, end times, class, confidence) is promoted to the **Master Flare Catalogue** via the `services/intelligence/catalogue_builder/` module. This catalogue acts as the source of truth.
+| Scenario | Confidence | Catalogue Status |
+|---|---|---|
+| Both bands agree | High | Promoted |
+| SoLEXS only | Medium (class-dependent) | Tentative |
+| HEL1OS only | Medium-low (per known SNR limits, `16_HEL1OS.md`) | Tentative |
+| Neither | N/A | No event |
 
-## Testing and Validation
+This directly implements the "tentative" rule from `README.md`'s key differentiator and addresses Risk R5 in `10_Risk_Assessment.md`.
 
-The nowcasting engine will be validated against historical GOES XRS event catalogues to ensure precision and recall align with established solar benchmarks.
+---
 
-**Next document:** `23_Forecasting.md`
+## Master Catalogue Promotion Rules
+
+1. Confidence ≥ documented threshold (tuned via precision-recall curves per class, per `README.md` → Why This Approach) → promoted.
+2. Below threshold but single-band detection → tentative, retained (never discarded).
+3. Every promotion records: timestamps, class, confidence score, contributing features, and a model/config version — supporting Auditability (per `README.md` NFRs).
+
+---
+
+## Nowcasting Pipeline Diagram
+
+```mermaid
+flowchart LR
+    A[Fused Features - 21] --> B1[SoLEXS: Threshold + Changepoint]
+    A --> B2[HEL1OS: Threshold + Changepoint]
+    B1 --> C[Event Characterization]
+    B2 --> C
+    C --> D[Cross-Band Confidence Fusion]
+    D -->|high confidence| E[Master Catalogue - Promoted]
+    D -->|single-band only| F[Master Catalogue - Tentative]
+```
+
+---
+
+## Latency Budget
+
+Detection must complete within the bound documented in `45_Monitoring.md`; DWT-based (not CWT) representations from `20_Signal_Processing.md` are used in this real-time path for that reason.
+
+**Next document:** `23_Forecasting.md` — say **NEXT** to continue.
+
+---
+
+## Revision History
+| Version | Date | Author | Notes |
+|---|---|---|---|
+| 0.1 | 2026-07-12 | HeliosAI Documentation | Initial Nowcasting spec — detection, fusion, catalogue rules |
