@@ -1,35 +1,82 @@
 # 40 — Data Visualization
 
-> **Document 40 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Defines the specific charting requirements.
+**HeliosAI** — AI-Powered Space Weather Intelligence Platform
+Document 40 of 61
 
 ---
 
-## Table of Contents
+## 1. Purpose
 
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [Light Curve Plots](#light-curve-plots)
-3. [Forecast Probability Plots](#forecast-probability-plots)
-4. [Explainability Plots](#explainability-plots)
+Specifies how HeliosAI renders high-frequency, potentially multi-day X-ray light-curve data efficiently and accurately in the browser, without misleading the viewer during down-sampling.
 
 ---
 
-## Purpose of This Document
+## 2. Rendering Stack
 
-This document standardizes how Plotly is used to render HeliosAI's complex datasets within the Dash application.
+| Layer | Technology |
+|---|---|
+| Charting library | Plotly.py (WebGL-accelerated `scattergl` traces for long series) |
+| Server-side aggregation | Pandas + custom down-sampling utilities |
+| Down-sampling algorithm | **LTTB** (Largest-Triangle-Three-Buckets), preserves visual shape/peaks better than naive decimation |
+| Delivery format | JSON payloads over REST (initial load) and WebSocket (incremental) |
 
-## Light Curve Plots
+---
 
-The central visualization is a shared-X-axis (Time in UTC) dual-Y-axis line chart.
-- **Left Y-Axis (Log Scale):** SoLEXS Soft X-ray flux (W/m^2). Crucial for displaying the 4-order-of-magnitude difference between background and X-class flares.
-- **Right Y-Axis (Linear Scale):** HEL1OS Hard X-ray counts/sec. 
-- **Overlays:** Vertical dashed lines indicating the Nowcasting Engine's start, peak, and end detections.
+## 3. Down-Sampling Strategy
 
-## Forecast Probability Plots
+Raw SoLEXS/HEL1OS cadence can produce far more points than a screen can usefully render. HeliosAI applies resolution tiers based on the selected time range:
 
-Represented as gauge charts or horizontal bar charts showing the probability [0-100%] of an M/X class flare occurring in the next 15, 30, and 60 minutes.
+| View Range | Target Points Rendered | Strategy |
+|---|---|---|
+| ≤ 1 hour | Full resolution | No down-sampling |
+| 1–24 hours | ~5,000 points | LTTB per band |
+| > 24 hours | ~5,000 points | LTTB per band, with peak-preservation override (flare peaks are never dropped even if LTTB would otherwise smooth them out) |
 
-## Explainability Plots
+**Peak-preservation override:** before down-sampling, any point already flagged as part of a nowcasted flare event (per the master catalogue) is force-included, guaranteeing that zooming out never visually hides a real event — a direct safeguard against the false impression of "no activity" during a high-density flare period.
 
-SHAP summary plots are rendered as horizontal bar charts ranking features by impact. Captum integrated gradients are visualized as a heatmap ribbon aligned underneath the main light curve plot, visually connecting the "why" to the "when".
+---
 
-**Next document:** `41_Admin_Panel.md`
+## 4. Dual-Band Synchronization
+
+Both SoLEXS and HEL1OS traces share a single x-axis (UTC, post-time-synchronization per `19_Data_Synchronization.md`). Zoom/pan/hover events on one trace are mirrored to the other via a shared Dash callback, so a scientist can visually correlate soft/hard X-ray timing offsets — directly supporting the hardness-ratio feature's interpretability.
+
+---
+
+## 5. Explainability Overlays
+
+When viewing a specific event's detail page, the light curve is annotated with:
+- Detected onset, peak, and decay-end markers (from the nowcasting engine).
+- Forecast trigger point, if the event was preceded by a forecast alert, with a lead-time annotation (predicted → actual peak).
+- SHAP/attention-weight highlight regions from `29_Explainable_AI.md`, shown as a secondary shaded trace beneath the main curve.
+
+---
+
+## 6. Chart Types Used
+
+| Chart | Where Used |
+|---|---|
+| Line (log-scale y-axis) | Primary light curves — flux spans orders of magnitude |
+| Shaded region | Flare event windows, confidence bands |
+| Radial gauge | Live forecast probability |
+| Heatmap | Catalogue Explorer's flare-class-over-time overview |
+| Bar (stratified) | Model evaluation class-wise precision/recall (`48_Model_Evaluation.md`) |
+
+---
+
+## 7. Accuracy Safeguards
+
+- Y-axis is always log-scale by default for flux (matches domain convention; linear toggle available), with axis labels never silently rescaled without a visible unit change.
+- Down-sampled views carry a subtle "aggregated view" indicator; switching to full resolution is one click (zoom-to-range).
+
+---
+
+## 8. Interfaces to Other Documents
+
+- **`39_Dashboard.md`** — primary consumer of these visualization patterns.
+- **`21_Feature_Engineering.md`** — source of hardness ratio and other overlay features.
+- **`29_Explainable_AI.md`** — source of explainability overlay data.
+- **`43_Analytics.md`** — aggregate/statistical views built on the same charting stack.
+
+---
+
+**Next document:** `41_Admin_Panel.md` — say **NEXT** to continue.
