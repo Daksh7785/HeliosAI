@@ -1,0 +1,11 @@
+[project]
+name = "heliosai-ingestion"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "astropy>=6.1.0,<6.2.0",
+    "sunpy>=6.0.0,<6.1.0",
+    "celery>=5.4.0,<5.5.0",
+    "structlog",
+    "heliosai-shared"
+]
