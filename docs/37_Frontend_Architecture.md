@@ -1,38 +1,92 @@
 # 37 — Frontend Architecture
 
-> **Document 37 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Defines the Dash-based client macro-architecture.
+**HeliosAI** — AI-Powered Space Weather Intelligence Platform
+Document 37 of 61
 
 ---
 
-## Table of Contents
+## 1. Purpose
 
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [Technology Choice](#technology-choice)
-3. [App Structure](#app-structure)
-4. [State Management](#state-management)
+Details the architecture of HeliosAI's **100% Python** frontend, replacing the React/Next.js/TypeScript stack referenced in generic project templates, per the explicit all-Python requirement in the README's Design Decisions.
 
 ---
 
-## Purpose of This Document
+## 2. Framework Choice
 
-This document defines the `services/dashboard/` module. It translates the 100%-Python requirement into a responsive, real-time web interface.
+| Concern | Choice | Rationale |
+|---|---|---|
+| Primary interactive dashboard | **Plotly Dash** | Fine-grained callback control, multi-page routing, production-capable for alert-driven, data-dense scientific UIs |
+| Admin / rapid internal tools | **Streamlit** | Faster to build simple forms/tables; used for admin panel and internal debugging utilities, not the primary alert console |
+| Charting | **Plotly.py** | Native to Dash, WebGL-accelerated for long light-curve series |
+| Styling | **Dash Bootstrap Components** | Consistent theming without hand-written CSS/JS |
+| Data grids | **Dash AG Grid** | Sortable/filterable catalogue tables at scale |
 
-## Technology Choice
+No JavaScript/TypeScript build toolchain (webpack, npm, React) is part of this repository. Dash's internal use of a React runtime is an implementation detail of the Dash library itself and is not authored or maintained by this project.
 
-- **Framework:** Plotly Dash. Chosen because it provides complex, interactive data visualizations (which are critical for light curves) natively in Python without requiring a separate React/TypeScript layer.
-- **Components:** Dash Mantine Components (DMC) for modern UI elements (buttons, notifications, layout grids) that look better than default Dash HTML components.
+---
 
-## App Structure
+## 3. Application Structure
 
-The dashboard is structured as a multi-page Dash application:
-- `app.py`: The entrypoint and layout shell.
-- `pages/`: Individual route handlers (e.g., Live Dashboard, Catalogue, Admin).
-- `api_client/`: A module dedicated to wrapping HTTPX/Requests calls to the `services/api/` layer, ensuring the dashboard never talks to the database directly.
+```
+src/frontend/
+├── app.py                 # Dash app factory, server config
+├── pages/
+│   ├── dashboard.py        # Light-curve visualizer + live alerts (see 39_Dashboard.md)
+│   ├── catalogue.py        # Master catalogue browser
+│   ├── alerts.py           # Alert console (see 42_Alert_System.md)
+│   └── admin/               # Streamlit sub-app, mounted separately (see 41_Admin_Panel.md)
+├── components/             # Reusable Dash components (banners, cards, charts)
+├── callbacks/               # Callback modules, grouped by page
+├── assets/                 # CSS overrides, favicon, static images
+└── ws_client.py             # WebSocket client bridging FastAPI stream to Dash
+```
 
-## State Management
+---
 
-Since Dash is stateless by design, state (such as the currently selected time range or the user's JWT) is stored in:
-- `dcc.Store` (browser local storage) for tokens.
-- URL query parameters (for shareable links to specific flare events).
+## 4. Rendering & State Model
 
-**Next document:** `38_UI_UX.md`
+```mermaid
+flowchart LR
+    API[FastAPI REST] -->|initial page load| Dash[Dash Server]
+    WS[FastAPI WebSocket] -->|live push| Client[dash-extensions WebSocket component]
+    Client --> Store[dcc.Store client-side state]
+    Store --> Callback[Dash Callbacks]
+    Callback --> Graph[dcc.Graph - Plotly light curves]
+    Callback --> Banner[Alert Banner Component]
+```
+
+- **Initial load:** server-side Dash callback fetches historical light-curve window + current catalogue via REST.
+- **Live updates:** `dash-extensions` WebSocket component subscribes to the FastAPI stream (`33_WebSocket_System.md`) and pushes incremental updates into a client-side `dcc.Store`, avoiding full-page reloads.
+- **Session state:** authenticated user/role held in an HTTP-only cookie (per `35_Authentication.md`); no sensitive state is kept in browser `localStorage`.
+
+---
+
+## 5. Multi-Page Routing
+
+Dash's `pages` plugin provides file-based routing (`/`, `/catalogue`, `/alerts`, `/admin`), each declaring its own layout and callbacks, avoiding a single monolithic layout file as the app grows.
+
+---
+
+## 6. Design System
+
+Full visual language (typography, color tokens for flare-class severity, layout grid) is specified in `38_UI_UX.md`. This document covers structural/technical architecture only.
+
+---
+
+## 7. Performance Considerations
+
+- Long light-curve series are down-sampled server-side (LTTB algorithm) before transmission for overview views, with full-resolution fetch on zoom — detailed in `40_Data_Visualization.md`.
+- Dash callbacks use `prevent_initial_call` and pattern-matching IDs to minimize unnecessary re-renders on high-frequency WebSocket pushes.
+
+---
+
+## 8. Interfaces to Other Documents
+
+- **`38_UI_UX.md`** — visual/interaction design built on this architecture.
+- **`39_Dashboard.md`** — the primary page implemented within this structure.
+- **`33_WebSocket_System.md`** — the streaming contract consumed by `ws_client.py`.
+- **`41_Admin_Panel.md`** — the Streamlit sub-application.
+
+---
+
+**Next document:** `38_UI_UX.md` — say **NEXT** to continue.
