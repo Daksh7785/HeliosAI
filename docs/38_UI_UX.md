@@ -1,39 +1,81 @@
-# 38 — UI/UX Design Principles
+# 38 — UI/UX
 
-> **Document 38 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Defines the visual and interaction design rules for the Dashboard.
-
----
-
-## Table of Contents
-
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [Design Philosophy](#design-philosophy)
-3. [Color Palette and Theming](#color-palette-and-theming)
-4. [Accessibility](#accessibility)
+**HeliosAI** — AI-Powered Space Weather Intelligence Platform
+Document 38 of 61
 
 ---
 
-## Purpose of This Document
+## 1. Purpose
 
-This document ensures the HeliosAI dashboard remains legible and professional, avoiding the cluttered "academic notebook" look common in scientific toolkits.
+Defines the visual design system and interaction principles for HeliosAI's dashboard, ensuring the interface serves its primary user — a scientist or space-weather-desk operator who needs to trust and act on nowcast/forecast triggers quickly, per the README's "Interface with visual alerts" requirement.
 
-## Design Philosophy
+---
 
-- **Data-First:** The light curve visualizations (`40_Data_Visualization.md`) should take up 70% of the screen real estate.
-- **High-Contrast:** Solar flare spikes happen rapidly; visual contrast must highlight anomalous peaks instantly.
-- **Actionable Alerts:** Nowcast and Forecast alerts must appear as toast notifications or banner overlays without obscuring the active data view.
+## 2. Design Principles
 
-## Color Palette and Theming
+1. **Legibility under urgency** — flare alerts must be readable at a glance; color and shape encode severity redundantly (not color alone), for accessibility.
+2. **Data density without clutter** — dual-band light curves, hardness ratio, and forecast probability share a coordinated timeline without overwhelming the viewer.
+3. **Trust through transparency** — every alert links directly to its supporting evidence (raw light curve, explainability output), never a bare notification.
+4. **Progressive disclosure** — overview first, drill-down on demand (catalogue summary → single-event detail → raw data + SHAP/attention view).
 
-The application defaults to a **Dark Theme** to reduce eye strain for operators monitoring screens continuously.
-- Background: `#1A1B1E`
-- SoLEXS Soft X-ray Trace: Cyan/Blue (`#228BE6`)
-- HEL1OS Hard X-ray Trace: Orange/Red (`#FA5252`)
-- Alerts (M/X Class): Flashing Red borders.
+---
 
-## Accessibility
+## 3. Color System (Flare-Class Severity)
 
-- All charts must support hover-text tooltips.
-- UI elements must have sufficient contrast ratios (WCAG AA).
+| Flare Class (GOES-equivalent) | Color Token | Usage |
+|---|---|---|
+| A / B (low) | `--severity-low` (blue-gray) | Catalogue rows, minor banner |
+| C (moderate) | `--severity-moderate` (amber) | Catalogue rows, standard banner |
+| M (high) | `--severity-high` (orange) | Prominent banner, sound-optional alert |
+| X (extreme) | `--severity-extreme` (red) | Full-width banner, persistent until acknowledged |
+| Tentative / single-band only | `--severity-tentative` (dashed outline, neutral gray) | Distinguishes unconfirmed dual-band candidates per README's cross-validation design |
 
-**Next document:** `39_Dashboard.md`
+Color is always paired with an icon/shape (circle/triangle/diamond/octagon of increasing severity) so the system remains usable for color-vision-deficient users.
+
+---
+
+## 4. Core Screens
+
+| Screen | Purpose | Primary Component |
+|---|---|---|
+| Live Dashboard | Real-time dual-band light curves + active alert banner | `dcc.Graph` (Plotly) + WebSocket-driven banner |
+| Catalogue Explorer | Browse/filter/export historical nowcast & forecast events | Dash AG Grid |
+| Event Detail | Single flare deep-dive: raw curves, class, confidence, explainability | Composite of Plotly + SHAP/attention plots |
+| Alert Console | Acknowledge/annotate active and past alerts | Card list + action buttons |
+| Admin Panel | User/role management, thresholds, ingestion status | Streamlit forms |
+
+---
+
+## 5. Interaction Patterns
+
+- **Alert lifecycle:** `triggered → acknowledged → resolved`, always visible as a status chip; unacknowledged alerts persist across page navigation.
+- **Zoom/pan on light curves:** synchronized across SoLEXS and HEL1OS panels (shared x-axis), so a zoom on one band zooms both.
+- **Hover tooltips:** show raw flux, timestamp, and (if within a flare window) class and confidence — never just a bare number.
+- **Filtering:** catalogue filters (class, band, confidence, date range, tentative/confirmed) are URL-encoded, so filtered views are shareable/bookmarkable.
+
+---
+
+## 6. Layout Grid
+
+Standard 12-column responsive grid (Dash Bootstrap Components), collapsing to a stacked single-column layout below 768px for tablet-based mission-desk displays.
+
+---
+
+## 7. Accessibility
+
+- WCAG 2.1 AA contrast minimums for all text and severity indicators.
+- All interactive elements keyboard-navigable (Dash's underlying React runtime provides this out of the box; verified via automated `pytest` + `axe-core` checks in CI).
+- Alert sounds (optional, for M/X class) are user-toggleable and never the sole signal of an event.
+
+---
+
+## 8. Interfaces to Other Documents
+
+- **`37_Frontend_Architecture.md`** — technical structure this design is implemented within.
+- **`39_Dashboard.md`** — detailed spec of the Live Dashboard screen.
+- **`42_Alert_System.md`** — alert lifecycle and dispatch logic behind the Alert Console.
+- **`29_Explainable_AI.md`** — content shown in the Event Detail explainability panel.
+
+---
+
+**Next document:** `39_Dashboard.md` — say **NEXT** to continue.
