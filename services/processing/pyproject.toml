@@ -1,13 +1,16 @@
 [project]
-name = "heliosai-processing"
+name = "processing"
 version = "0.1.0"
+description = "HeliosAI Processing Layer"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "numpy",
-    "scipy",
+    "celery",
+    "redis",
+    "sqlalchemy",
+    "psycopg2-binary",
+    "pydantic",
     "pandas",
-    "PyWavelets>=1.7.0,<1.8.0",
-    "celery>=5.4.0,<5.5.0",
-    "structlog",
-    "heliosai-shared"
+    "scipy",
+    "numpy",
 ]
