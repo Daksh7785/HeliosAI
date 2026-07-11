@@ -1,13 +1,14 @@
 [project]
-name = "heliosai-dashboard"
+name = "dashboard"
 version = "0.1.0"
+description = "HeliosAI Plotly Dash Dashboard"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "dash>=2.18.0,<2.19.0",
+    "dash",
     "dash-bootstrap-components",
-    "dash-ag-grid",
-    "streamlit>=1.38.0,<1.39.0",
-    "plotly>=5.24.0,<5.25.0",
-    "structlog",
-    "heliosai-shared"
+    "plotly",
+    "pandas",
+    "requests",
+    "pydantic",
 ]
