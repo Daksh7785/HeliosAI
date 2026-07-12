@@ -79,8 +79,24 @@ def load_and_merge_data(solexs_path, helios_path):
     df_merged = pd.merge(df_solexs, df_helios, on='timestamp', how='outer')
     df_merged = df_merged.sort_values('timestamp').reset_index(drop=True)
     
-    # Forward fill missing values if any
+    # Preprocessing State Machine
+    df_merged['data_quality_flag'] = 'RAW'
+    
+    # 1. Flag negative fluxes as QUARANTINED
+    quarantine_mask = (df_merged['solexs_flux'] < 0) | (df_merged['helios_flux'] < 0)
+    df_merged.loc[quarantine_mask, 'data_quality_flag'] = 'QUARANTINED'
+    # We set negative fluxes to NaN so they get imputed later
+    df_merged.loc[df_merged['solexs_flux'] < 0, 'solexs_flux'] = np.nan
+    df_merged.loc[df_merged['helios_flux'] < 0, 'helios_flux'] = np.nan
+    
+    # 2. Impute missing values and mark as VALIDATED
+    has_nan_mask = df_merged['solexs_flux'].isna() | df_merged['helios_flux'].isna()
+    
+    # Forward fill missing values
     df_merged = df_merged.ffill().bfill()
+    
+    # Any row that wasn't quarantined is now validated
+    df_merged.loc[df_merged['data_quality_flag'] == 'RAW', 'data_quality_flag'] = 'VALIDATED'
     
     return df_merged
 
