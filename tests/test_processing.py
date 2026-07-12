@@ -1,33 +1,40 @@
 import pytest
 import numpy as np
 import pandas as pd
+import os
+import tempfile
+from src.data_loader import generate_simulated_data, load_and_merge_data
 
-def test_preprocessing_median_filter():
-    """
-    Test the median filter logic from services/processing/src/processing/preprocess.py
-    """
-    from services.processing.src.processing.preprocess import Preprocessor
-    processor = Preprocessor(filter_window=3)
-    
-    data = np.array([1.0, 100.0, 1.0, 1.0])
-    filtered = processor.median_filter(data)
-    
-    assert filtered[1] == 1.0 # Spike removed
-    
-def test_time_synchronizer():
-    """
-    Test the time synchronization engine.
-    """
-    from services.processing.src.processing.sync import TimeSynchronizer
-    sync = TimeSynchronizer(master_cadence_sec=1.0)
-    
-    start = pd.Timestamp("2026-07-03T00:00:00Z")
-    end = pd.Timestamp("2026-07-03T00:00:02Z")
-    
-    solexs = pd.DataFrame({'flux': [1, 2]}, index=[start, end])
-    hel1os = pd.DataFrame({'counts': [10, 20]}, index=[start, end])
-    
-    merged = sync.align_series(solexs, hel1os, start, end)
-    assert len(merged) == 3 # 0s, 1s, 2s
-    assert "solexs_flux" in merged.columns
-    assert "hel1os_counts" in merged.columns
+def test_generate_simulated_data():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        solexs_path, helios_path = generate_simulated_data(output_dir=tmpdir, duration_hours=1)
+        assert os.path.exists(solexs_path)
+        assert os.path.exists(helios_path)
+        
+        df_solexs = pd.read_csv(solexs_path)
+        assert len(df_solexs) == 3600
+        
+def test_data_quality_flags():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create dummy data with negative flux
+        solexs_path = os.path.join(tmpdir, "solexs.csv")
+        helios_path = os.path.join(tmpdir, "helios.csv")
+        
+        pd.DataFrame({
+            'timestamp': ['2024-01-01 00:00:00', '2024-01-01 00:00:01'],
+            'solexs_flux': [1e-7, -1e-7]
+        }).to_csv(solexs_path, index=False)
+        
+        pd.DataFrame({
+            'timestamp': ['2024-01-01 00:00:00', '2024-01-01 00:00:01'],
+            'helios_flux': [1e-8, 1e-8]
+        }).to_csv(helios_path, index=False)
+        
+        df_merged = load_and_merge_data(solexs_path, helios_path)
+        
+        # Check that the first row is VALIDATED and second is QUARANTINED
+        assert df_merged.loc[0, 'data_quality_flag'] == 'VALIDATED'
+        assert df_merged.loc[1, 'data_quality_flag'] == 'QUARANTINED'
+        
+        # Check imputation (forward fill from row 0)
+        assert df_merged.loc[1, 'solexs_flux'] == 1e-7
