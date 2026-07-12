@@ -23,7 +23,7 @@ logs:
 	docker-compose logs -f
 
 test:
-	pytest tests/
+	python -m pytest tests/
 
 lint:
 	ruff check .
