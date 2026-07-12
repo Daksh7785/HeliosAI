@@ -1,43 +1,51 @@
-# 29 — Explainable AI (XAI)
+# 29_Explainable_AI.md
 
-> **Document 29 of 61** in the HeliosAI documentation set (see `README.md` → Repository Structure). Details how HeliosAI models remain transparent and interpretable.
-
----
-
-## Table of Contents
-
-1. [Purpose of This Document](#purpose-of-this-document)
-2. [The Interpretability Mandate](#the-interpretability-mandate)
-3. [Tree-Based Explainability (SHAP)](#tree-based-explainability-shap)
-4. [Deep Learning Explainability (Captum)](#deep-learning-explainability-captum)
-5. [Serving Explanations](#serving-explanations)
+**HeliosAI** — AI-Powered Space Weather Intelligence Platform
+Document 29 of 61
 
 ---
 
-## Purpose of This Document
+## 1. Purpose
 
-This document defines how predictions made by the Forecasting Engine (`23_Forecasting.md`) are explained to human operators, transforming "black box" models into trusted operational tools.
+This document defines the Explainable AI (XAI) methodology used to interpret the predictions made by the HeliosAI forecasting models. Space weather forecasting requires high scientific accountability; black-box predictions are insufficient for satellite operators and power grid managers who must understand *why* a flare is being predicted before taking defensive action.
 
-## The Interpretability Mandate
+---
 
-In space weather operations, a high-probability warning for an X-class flare is only actionable if researchers understand *why* the warning was issued. Is it due to a sudden HEL1OS spike, or a steady climb in SoLEXS background flux?
+## 2. Methodology
 
-## Tree-Based Explainability (SHAP)
+The primary forecasting engine in HeliosAI is an XGBoost classifier (see `23_Forecasting.md`). To provide real-time explanations with minimal latency, we use a hybrid XAI approach:
 
-For baseline models (XGBoost, LightGBM, CatBoost):
-- **Tool:** SHAP (SHapley Additive exPlanations) TreeExplainer.
-- **Output:** Feature importance rankings and dependence plots.
-- **Integration:** SHAP values are calculated asynchronously via Celery (`34_Background_Jobs.md`) after each major forecast generation.
+### 2.1 Real-Time Approximation (Production)
+In the production streaming pipeline (`src/pipeline/realtime_simulator.py`), evaluating full SHAP (SHapley Additive exPlanations) values for every rolling window step introduces unacceptable latency. Instead, we compute a localized feature contribution proxy:
 
-## Deep Learning Explainability (Captum)
+`Feature Contribution = Global Feature Importance * Current Feature Value`
 
-For deep sequence and Transformer models:
-- **Tool:** PyTorch Captum.
-- **Methods:** Integrated Gradients (for LSTMs/GRUs) and Attention Rollout (for Transformers).
-- **Output:** A temporal heatmap overlaid on the light curve, highlighting the exact timestamps and features that drove the prediction.
+This allows us to instantly surface the "Top 3 Prediction Drivers" (e.g., `solexs_flux_max_60s`, `helios_flux_diff_60s`) in the API response and on the live dashboard.
 
-## Serving Explanations
+### 2.2 Deep Analysis (Offline/Batch)
+For post-event analysis and model debugging, we use TreeSHAP.
+- **SHAP Summary Plots**: To understand the global impact of features across all historical flares.
+- **SHAP Force Plots**: To break down individual false-positive or false-negative predictions during model retraining.
 
-Explanation artifacts are serialized, stored in the database (`30_Database_Design.md`), and served via dedicated REST endpoints (`32_API_Design.md`) to the Dashboard's Explainability View.
+---
 
-**Next document:** `30_Database_Design.md`
+## 3. API Contract
+
+The XAI insights are exposed via the `FeatureResponse` in `src/serving/api/main.py`:
+
+```json
+{
+  "timestamp": "2024-01-01T12:00:00Z",
+  "solexs_flux": 5.4e-6,
+  "hel1os_flux": 2.1e-7,
+  "forecast_probability": 0.85,
+  "xai_top_features": "[\"solexs_flux_diff_60s\", \"helios_flux_max_60s\", \"hardness_ratio\"]",
+  "data_quality_flag": "VALIDATED"
+}
+```
+
+---
+
+## 4. Interfaces to Other Documents
+- **Depends on:** `23_Forecasting.md` (which defines the XGBoost model).
+- **Referenced by:** `38_UI_UX.md`, `40_Data_Visualization.md`, `48_Model_Evaluation.md`, `59_Research_Paper.md`.
