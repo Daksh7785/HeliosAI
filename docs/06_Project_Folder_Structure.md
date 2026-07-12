@@ -7,165 +7,79 @@ Document 06 of 61
 
 ## 1. Purpose
 
-This document defines the canonical directory structure of the HeliosAI repository. It ensures that all engineers, models, and scripts expect code, data, and configurations to exist in predictable locations, maintaining alignment with the Modular Monolith architecture described in `03_System_Architecture.md`.
+This document outlines the standard directory structure for the HeliosAI repository, providing a high-level map of where code, configuration, documentation, and tests reside. It ensures consistency across the project and helps developers navigate the codebase efficiently.
 
 ---
 
 ## 2. Root Directory Structure
 
-The repository is organized into top-level directories separating application code, infrastructure, documentation, and data.
+The repository is organized following standard Python/FastAPI and modern frontend practices.
 
 ```text
 HeliosAI/
-├── .github/                # CI/CD workflows and GitHub templates
-├── data/                   # Local data storage (git-ignored)
-├── deploy/                 # Deployment scripts and compose files
-├── docs/                   # Full documentation suite (00-61)
-├── infra/                  # Infrastructure as Code (Terraform/K8s)
-├── models/                 # Serialized model artifacts (git-ignored)
-├── notebooks/              # Jupyter notebooks for EDA and research
-├── pipeline/               # Airflow DAGs
-├── prompts/                # Antigravity master prompts for AI assistance
-├── scripts/                # Utility and administration scripts
-├── src/                    # Primary application source code
-├── tests/                  # Test suites and fixtures
-├── .env.example            # Environment variable template
-├── app.py                  # API Entrypoint
-├── docker-compose.yml      # Base docker-compose configuration
-├── Dockerfile              # Multi-stage Docker build
-├── Makefile                # Task runner shortcuts
-├── pyproject.toml          # Python dependencies and tool configs
-└── README.md               # Repository entry point
+├── .github/                  # GitHub Actions workflows (CI/CD)
+├── docs/                     # Comprehensive project documentation (numbered series)
+├── src/                      # Main application source code
+│   ├── frontend/             # Dash/React UI layer
+│   ├── serving/              # FastAPI backend API
+│   ├── pipeline/             # Data ingestion and processing pipelines
+│   ├── shared/               # Shared utilities, database models, and common logic
+│   ├── flare_detector.py     # Nowcasting algorithm core
+│   ├── forecaster.py         # ML Forecasting logic (XGBoost)
+│   └── data_loader.py        # Telemetry ingestion/simulation
+├── tests/                    # Automated test suite (pytest)
+│   ├── unit/                 # Fast, isolated tests
+│   └── integration/          # Tests requiring DB or multiple components
+├── data/                     # Local data storage for dev (simulated telemetry, etc.)
+├── models/                   # Saved ML models (e.g., .pkl files)
+├── docker-compose.yml        # Development environment services
+├── docker-compose.dev.yml    # Overrides for local development
+├── requirements.txt          # Python dependencies
+├── README.md                 # Project overview and quickstart
+└── MASTER_DOCUMENTATION_PLAN.md # Blueprint for all docs
 ```
 
 ---
 
-## 3. `src/` Directory Breakdown
+## 3. Key Subsystem Details
 
-The `src/` directory houses the core application, strictly adhering to domain boundaries.
+### 3.1 `src/serving/` (API Layer)
+Handles external HTTP requests and serves data to the frontend and third-party consumers.
+*   **`api/main.py`**: The FastAPI application entry point, defining routes and dependency injections.
+*   **`api/routers/`**: Grouped API endpoints (e.g., telemetry, catalogue).
 
-```text
-src/
-├── ingestion/              # Subsystem: Data Fetching & Parsing
-│   ├── solexs/             # SoLEXS specific fetchers/parsers
-│   └── hel1os/             # HEL1OS specific fetchers/parsers
-├── processing/             # Subsystem: Syncing & Feature Engineering
-│   ├── time_sync.py        # Resampling and alignment logic
-│   └── feature_gen.py      # Hardness ratio, wavelet transforms
-├── intelligence/           # Subsystem: ML Models & Inference
-│   ├── nowcast/            # Active flare detection logic
-│   ├── forecast/           # Future probability models
-│   └── xai/                # Explainability (SHAP) generators
-├── serving/                # Subsystem: API & WebSockets
-│   ├── api/                # FastAPI routes and controllers
-│   ├── ws/                 # WebSocket connection managers
-│   └── background/         # Celery task definitions
-├── frontend/               # Subsystem: Dash & Streamlit UI
-│   ├── components/         # Reusable UI widgets
-│   ├── pages/              # Dashboard layouts
-│   └── callbacks/          # Dash interactivity logic
-└── shared/                 # Cross-cutting concerns
-    ├── database/           # SQLAlchemy models and Repositories
-    ├── config/             # Pydantic settings management
-    └── logging.py          # Structured logging setup
-```
+### 3.2 `src/shared/` (Common Core)
+Contains code used across multiple subsystems (API, Pipeline, CLI).
+*   **`database/db.py`**: SQLAlchemy engine and session management.
+*   **`database/models.py`**: ORM definitions mapping to database tables (`FeatureStore`, `FlareCatalogue`).
+
+### 3.3 `src/pipeline/` (Data Processing)
+Houses the background jobs and stream processing logic.
+*   **`realtime_simulator.py`**: Simulates live telemetry feed and runs real-time nowcasting/forecasting.
+*   (Future) **`ingestion/`**: Scripts for fetching live ISRO data when available.
+
+### 3.4 `src/frontend/` (User Experience)
+The web-based dashboard for human-in-the-loop monitoring.
+*   **`app.py`**: The main Plotly Dash application.
+*   **`pages/`**: (Future) Additional dashboard views (e.g., Admin Panel, Historical Analysis).
 
 ---
 
-## 4. `tests/` Directory Breakdown
+## 4. Environment-Specific Overrides
 
-Tests mirror the `src/` directory structure but are separated by test type.
-
-```text
-tests/
-├── unit/                   # Fast, isolated tests without DB access
-│   ├── test_ingestion/
-│   ├── test_processing/
-│   └── ...
-├── integration/            # Slower tests requiring DB/Redis
-│   ├── test_api_flow.py
-│   └── test_celery_tasks.py
-├── e2e/                    # End-to-End pipeline tests
-│   └── test_full_pipeline.py
-├── fixtures/               # Test data (e.g., sample FITS files)
-└── conftest.py             # Shared pytest fixtures
-```
+*   **Local Development**: Relies on `requirements.txt` for dependencies and local SQLite (`heliosai.db`) or Docker Compose for services.
+*   **Production**: Relies on Docker images built via CI/CD, connected to managed cloud databases (PostgreSQL, Redis) and orchestrated via Kubernetes.
 
 ---
 
-## 5. `data/` Directory (Git-Ignored)
+## 5. Documentation Mapping
 
-Local execution requires a standardized location for transient or raw data files. This directory is strictly ignored by Git to prevent committing large binaries or sensitive info.
+All documentation lives in `docs/` and follows a strict two-digit numbering scheme (00-61) defined in `MASTER_DOCUMENTATION_PLAN.md`.
 
-```text
-data/
-├── raw/                    # Downloaded FITS files from ISRO
-├── processed/              # Intermediate data dumps
-└── cache/                  # Redis/job temporary storage
-```
+*   `00`-`05`: Core architecture and specs.
+*   `06`-`15`: Development environment and structure.
+*   `22`-`29`: Algorithms and Machine Learning.
+*   `30`-`42`: Subsystem designs.
 
 ---
-
-## 6. Interfaces to Other Documents
-
-- **`03_System_Architecture.md`** — provides the logical mapping for the physical `src/` directories.
-- **`56_Coding_Standards.md`** — defines the import rules across these directories (e.g., avoiding circular dependencies between subsystems).
-
----
-
-## 7. Acceptance Criteria
-
-- [ ] Directory structure strictly prevents cyclical imports between top-level `src/` subsystems.
-- [ ] The `shared/` folder contains only cross-cutting utilities (DB, config, logging) and no domain-specific business logic.
-- [ ] Every subsystem defined in `03` has a corresponding directory in `src/`.
-
----
-
-## 8. Review Checklist
-
-- [ ] `data/` and `models/` must be included in `.gitignore`.
-- [ ] No frontend code (Dash/Streamlit) should reside outside of `src/frontend/`.
-
----
-
-## 9. Future Improvements
-
-- If the application transitions to a true microservices architecture, the `src/` subdirectories may be split into entirely independent repositories or top-level project folders.
-
----
-
-## Antigravity Development Prompt
-
-```
-PROJECT CONTEXT:
-You are implementing a documentation-only artifact — this task produces no source code.
-Repository: HeliosAI. This is document 06 of a 61-document specification set.
-
-FOLDER:
-docs/06_Project_Folder_Structure.md
-
-FILES TO PRODUCE:
-None (documentation task). Output exactly one file: docs/06_Project_Folder_Structure.md
-
-CODING STANDARDS:
-N/A — Markdown only. Follow the structural template used by all other docs.
-
-EXPECTED OUTPUT:
-A single self-contained Markdown file outlining the directory tree and rules.
-
-TESTING:
-Documentation-only — validation is a Markdown lint pass.
-
-ACCEPTANCE CRITERIA:
-See §7 above.
-
-DELIVERABLES:
-docs/06_Project_Folder_Structure.md
-
-GIT COMMIT FORMAT:
-docs: add 06_Project_Folder_Structure.md (directory layout)
-```
-
----
-
-**Next document:** `07_Tech_Stack.md` — say **NEXT** to continue.
+*End of Document 06*
