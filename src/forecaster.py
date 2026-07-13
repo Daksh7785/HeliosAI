@@ -2,9 +2,14 @@ import pandas as pd
 import numpy as np
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix
 import joblib
 import os
+import sys
+
+# Ensure intelligence module can be imported
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../services/intelligence/src/intelligence')))
+from forecast_deep_models.lstm_model import train_pytorch_lstm, predict_pytorch_lstm
 
 def create_features_and_labels(df, flare_events, lead_time_minutes=30, history_window=60):
     """
@@ -45,9 +50,10 @@ def create_features_and_labels(df, flare_events, lead_time_minutes=30, history_w
         
     return df.reset_index(drop=True)
 
-def train_forecasting_model(df_features, model_path='models/xgboost_forecaster.pkl'):
+def train_forecasting_model(df_features, lead_time_minutes=15, model_path='models/xgboost_forecaster.pkl'):
     """
     Trains an XGBoost model to forecast flares.
+    Calculates TPR, FAR, and Lead Time metrics.
     """
     features = [c for c in df_features.columns if c not in ['timestamp', 'target_flare_in_N_min', 'solexs_flux', 'helios_flux', 'soft_baseline', 'soft_mad', 'soft_flare_detected', 'hard_baseline', 'hard_mad', 'hard_flare_detected', 'flare_active', 'flare_class', 'event_group']]
     
@@ -77,13 +83,83 @@ def train_forecasting_model(df_features, model_path='models/xgboost_forecaster.p
     print("--- Forecasting Model Evaluation ---")
     print(classification_report(y_test, preds))
     
+    # Calculate Custom Metrics
+    cm = confusion_matrix(y_test, preds)
+    if cm.shape == (2, 2):
+        tn, fp, fn, tp = cm.ravel()
+        tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        far = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+    else:
+        tpr = 0.0
+        far = 0.0
+        
+    metrics = {
+        'TPR': tpr,
+        'FAR': far,
+        'Lead_Time_Minutes': lead_time_minutes
+    }
+    print(f"TPR: {tpr:.2f}, FAR: {far:.2f}, Lead Time: {lead_time_minutes} min")
+    
     # Save model
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     joblib.dump(model, model_path)
     joblib.dump(features, model_path.replace('.pkl', '_features.pkl'))
+    joblib.dump(metrics, model_path.replace('.pkl', '_metrics.pkl'))
     print(f"Model saved to {model_path}")
     
-    return model
+    return model, metrics
+
+def train_lstm_forecasting_model(df_features, lead_time_minutes=15, model_path='models/lstm_forecaster.pkl', seq_length=10):
+    """
+    Trains a PyTorch LSTM model to forecast flares.
+    Calculates TPR, FAR, and Lead Time metrics.
+    """
+    features = [c for c in df_features.columns if c not in ['timestamp', 'target_flare_in_N_min', 'solexs_flux', 'helios_flux', 'soft_baseline', 'soft_mad', 'soft_flare_detected', 'hard_baseline', 'hard_mad', 'hard_flare_detected', 'flare_active', 'flare_class', 'event_group']]
+    
+    X = df_features[features]
+    y = df_features['target_flare_in_N_min']
+    
+    # Simple temporal split (first 80% train, last 20% test)
+    split_idx = int(len(df_features) * 0.8)
+    X_train, X_test = X.iloc[:split_idx], X.iloc[split_idx:]
+    y_train, y_test = y.iloc[:split_idx], y.iloc[split_idx:]
+    
+    # Train LSTM
+    model = train_pytorch_lstm(X_train, y_train, input_dim=len(features), epochs=5, batch_size=64, seq_length=seq_length)
+    
+    # Evaluate
+    preds_prob = predict_pytorch_lstm(model, X_test, seq_length=seq_length)
+    preds = (preds_prob > 0.5).astype(int)
+    
+    print("--- LSTM Forecasting Model Evaluation ---")
+    print(classification_report(y_test, preds))
+    
+    # Calculate Custom Metrics
+    cm = confusion_matrix(y_test, preds)
+    if cm.shape == (2, 2):
+        tn, fp, fn, tp = cm.ravel()
+        tpr = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        far = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+    else:
+        tpr = 0.0
+        far = 0.0
+        
+    metrics = {
+        'TPR': tpr,
+        'FAR': far,
+        'Lead_Time_Minutes': lead_time_minutes
+    }
+    print(f"TPR: {tpr:.2f}, FAR: {far:.2f}, Lead Time: {lead_time_minutes} min")
+    
+    # Save model and features using torch/joblib
+    import torch
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    torch.save(model.state_dict(), model_path)
+    joblib.dump(features, model_path.replace('.pkl', '_features.pkl'))
+    joblib.dump(metrics, model_path.replace('.pkl', '_metrics.pkl'))
+    print(f"Model saved to {model_path}")
+    
+    return model, metrics
 
 if __name__ == "__main__":
     from data_loader import load_and_merge_data
