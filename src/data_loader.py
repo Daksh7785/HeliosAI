@@ -1,6 +1,13 @@
 import pandas as pd
 import numpy as np
 import os
+import glob
+
+try:
+    from astropy.io import fits
+    ASTROPY_AVAILABLE = True
+except ImportError:
+    ASTROPY_AVAILABLE = False
 
 def generate_simulated_data(output_dir='data', duration_hours=24, freq='1S'):
     """
@@ -65,15 +72,65 @@ def generate_simulated_data(output_dir='data', duration_hours=24, freq='1S'):
     print(f"Simulated data generated at {output_dir}")
     return solexs_path, helios_path
 
-def load_and_merge_data(solexs_path, helios_path):
+def load_fits_file(fits_path, payload_type):
     """
-    Load SoLEXS and HEL1OS CSVs and merge them on timestamp.
+    Reads an ISSDC Level-1 FITS file for SoLEXS or HEL1OS.
     """
-    df_solexs = pd.read_csv(solexs_path)
-    df_helios = pd.read_csv(helios_path)
+    if not ASTROPY_AVAILABLE:
+        raise ImportError("astropy is required to read FITS files.")
     
-    df_solexs['timestamp'] = pd.to_datetime(df_solexs['timestamp'])
-    df_helios['timestamp'] = pd.to_datetime(df_helios['timestamp'])
+    with fits.open(fits_path) as hdul:
+        data_ext = next((hdu for hdu in hdul if isinstance(hdu, fits.BinTableHDU)), None)
+        if data_ext is None:
+            raise ValueError(f"No binary table found in {fits_path}")
+            
+        data = data_ext.data
+        col_names = [col.name.upper() for col in data_ext.columns]
+        
+        time_col = next((name for name in col_names if 'TIME' in name), col_names[0])
+        flux_col = None
+        for name in col_names:
+            if ('FLUX' in name or 'RATE' in name) and not flux_col:
+                flux_col = name
+        if not flux_col:
+            flux_col = col_names[1]
+            
+        times = data[time_col]
+        fluxes = data[flux_col]
+        
+        if len(fluxes.shape) > 1:
+            fluxes = np.sum(fluxes, axis=1)
+            
+        if np.issubdtype(times.dtype, np.number):
+            timestamps = pd.to_datetime('2024-01-01') + pd.to_timedelta(times, unit='s')
+        else:
+            timestamps = pd.to_datetime(times)
+            
+        return pd.DataFrame({'timestamp': timestamps, f'{payload_type}_flux': fluxes})
+
+def load_and_merge_data(solexs_path=None, helios_path=None, use_real_data=False):
+    """
+    Load SoLEXS and HEL1OS data. If use_real_data is True, looks for FITS in data/raw.
+    Otherwise uses the provided CSV paths.
+    """
+    df_solexs, df_helios = None, None
+    
+    if use_real_data:
+        solexs_files = glob.glob('data/raw/*solexs*.fits') + glob.glob('tests/fixtures/*solexs*.fits')
+        helios_files = glob.glob('data/raw/*helios*.fits') + glob.glob('tests/fixtures/*helios*.fits')
+        
+        if solexs_files and helios_files:
+            try:
+                df_solexs = load_fits_file(solexs_files[0], 'solexs')
+                df_helios = load_fits_file(helios_files[0], 'helios')
+            except Exception as e:
+                print(f"Failed to read real FITS files: {e}. Falling back to CSV.")
+    
+    if df_solexs is None or df_helios is None:
+        df_solexs = pd.read_csv(solexs_path)
+        df_helios = pd.read_csv(helios_path)
+        df_solexs['timestamp'] = pd.to_datetime(df_solexs['timestamp'])
+        df_helios['timestamp'] = pd.to_datetime(df_helios['timestamp'])
     
     # Merge as of or exact match (assuming exact match for simulated)
     df_merged = pd.merge(df_solexs, df_helios, on='timestamp', how='outer')
