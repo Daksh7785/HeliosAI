@@ -6,8 +6,9 @@ import os
 import joblib
 import sys
 
-# Ensure src modules can be imported
+# Ensure src and intelligence modules can be imported
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'services/intelligence/src/intelligence')))
 from data_loader import load_and_merge_data
 from flare_detector import detect_flares
 from forecaster import create_features_and_labels
@@ -18,29 +19,80 @@ st.title("☀️ HeliosAI: Solar Flare Nowcasting & Forecasting")
 st.markdown("Monitoring Soft X-ray (SoLEXS) and Hard X-ray (HEL1OS) data from Aditya-L1")
 
 @st.cache_data
-def load_data():
+def load_data(use_real_data=False):
     solexs_path = 'data/solexs_simulated.csv'
     helios_path = 'data/helios_simulated.csv'
-    if not os.path.exists(solexs_path) or not os.path.exists(helios_path):
+    if not use_real_data and (not os.path.exists(solexs_path) or not os.path.exists(helios_path)):
         from data_loader import generate_simulated_data
         generate_simulated_data()
-    return load_and_merge_data(solexs_path, helios_path)
+    return load_and_merge_data(solexs_path, helios_path, use_real_data=use_real_data)
 
 @st.cache_resource
-def load_model():
-    model_path = 'models/xgboost_forecaster.pkl'
-    if os.path.exists(model_path):
-        model = joblib.load(model_path)
-        features = joblib.load(model_path.replace('.pkl', '_features.pkl'))
-        return model, features
-    return None, None
-
-df = load_data()
-model, model_features = load_model()
+def load_model(model_type="XGBoost (Baseline)"):
+    if model_type == "XGBoost (Baseline)":
+        model_path = 'models/xgboost_forecaster.pkl'
+        if os.path.exists(model_path):
+            model = joblib.load(model_path)
+            features = joblib.load(model_path.replace('.pkl', '_features.pkl'))
+            metrics_path = model_path.replace('.pkl', '_metrics.pkl')
+            metrics = joblib.load(metrics_path) if os.path.exists(metrics_path) else None
+            return model, features, metrics, "xgboost"
+    else:
+        model_path = 'models/lstm_forecaster.pkl'
+        if os.path.exists(model_path):
+            import torch
+            import sys
+            sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'services/intelligence/src/intelligence')))
+            from forecast_deep_models.lstm_model import FlareLSTM
+            
+            features = joblib.load(model_path.replace('.pkl', '_features.pkl'))
+            model = FlareLSTM(input_dim=len(features))
+            model.load_state_dict(torch.load(model_path, weights_only=True))
+            model.eval()
+            
+            metrics_path = model_path.replace('.pkl', '_metrics.pkl')
+            metrics = joblib.load(metrics_path) if os.path.exists(metrics_path) else None
+            return model, features, metrics, "lstm"
+            
+    return None, None, None, None
 
 # Sidebar controls
 st.sidebar.header("Controls")
+data_source = st.sidebar.radio("Data Source", ["Simulated Data", "Real ISSDC Data"])
+use_real_data = data_source == "Real ISSDC Data"
+
+model_type = st.sidebar.selectbox("Forecasting Model", ["XGBoost (Baseline)", "LSTM (Deep Learning)"])
+
 time_range = st.sidebar.slider("Select Time Range (hours from start)", 0, 24, (0, 24))
+
+df = load_data(use_real_data=use_real_data)
+
+st.sidebar.markdown("---")
+if st.sidebar.button("Retrain Forecast Model"):
+    with st.spinner(f"Retraining {model_type}..."):
+        from forecaster import train_forecasting_model, train_lstm_forecasting_model
+        from flare_detector import detect_flares
+        from forecaster import create_features_and_labels
+        
+        df_processed, flare_events = detect_flares(df)
+        df_features = create_features_and_labels(df_processed, flare_events, lead_time_minutes=15)
+        
+        if model_type == "XGBoost (Baseline)":
+            train_forecasting_model(df_features)
+        else:
+            train_lstm_forecasting_model(df_features)
+            
+        st.sidebar.success(f"{model_type} retrained successfully!")
+        load_model.clear() # clear cache so new model is loaded
+
+model, model_features, model_metrics, loaded_type = load_model(model_type)
+
+if model_metrics:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Model Evaluation Metrics")
+    st.sidebar.metric("True Positive Rate (TPR)", f"{model_metrics.get('TPR', 0):.1%}")
+    st.sidebar.metric("False Alarm Rate (FAR)", f"{model_metrics.get('FAR', 0):.1%}")
+    st.sidebar.metric("Average Lead Time", f"{model_metrics.get('Lead_Time_Minutes', 15)} min")
 
 start_time = df['timestamp'].min() + pd.Timedelta(hours=time_range[0])
 end_time = df['timestamp'].min() + pd.Timedelta(hours=time_range[1])
@@ -59,14 +111,31 @@ if model:
         # Passing an empty catalogue since we only want features
         df_feat = create_features_and_labels(df_filtered, pd.DataFrame(columns=['start_time', 'end_time']))
         
-        # Only predict if we have all features
         missing_feats = [f for f in model_features if f not in df_feat.columns]
         if not missing_feats:
-            probs = model.predict_proba(df_feat[model_features])[:, 1]
+            if loaded_type == "xgboost":
+                probs = model.predict_proba(df_feat[model_features])[:, 1]
+            else:
+                import sys
+                sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'services/intelligence/src/intelligence')))
+                from forecast_deep_models.lstm_model import predict_pytorch_lstm
+                probs = predict_pytorch_lstm(model, df_feat[model_features])
             df_feat['flare_probability'] = probs
             df_forecast_prob = df_feat[['timestamp', 'flare_probability']]
 
 # Create Plotly figure
+st.markdown("---")
+if not df_filtered.empty:
+    nowcast_active = not df_nowcast.empty and df_nowcast.iloc[-1].get('flare_active', False)
+    forecast_alert = df_forecast_prob is not None and not df_forecast_prob.empty and df_forecast_prob.iloc[-1]['flare_probability'] > 0.5
+    
+    if nowcast_active:
+        st.error("🚨 **ACTIVE FLARE ALERT** 🚨 - Solar flare currently detected in progress!")
+    elif forecast_alert:
+        st.warning("⚠️ **FORECAST ALERT** ⚠️ - High probability of a solar flare in the next 15 minutes!")
+    else:
+        st.success("✅ **Space Weather Normal** - No active flares detected or forecasted.")
+
 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
                     vertical_spacing=0.05,
                     subplot_titles=('Soft X-ray (SoLEXS)', 'Hard X-ray (HEL1OS)', 'Flare Probability (Forecast)'))
