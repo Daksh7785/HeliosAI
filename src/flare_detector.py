@@ -29,15 +29,15 @@ def detect_flares(df, soft_col='solexs_flux', hard_col='helios_flux', window=300
     # Flare is flagged if either soft or hard detects it. Hard X-ray is usually impulsive and happens earlier.
     df['flare_active'] = df['soft_flare_detected'] | df['hard_flare_detected']
     
-    # Assign classes based on soft X-ray peak (simplified GOES class logic for simulation)
-    # Background is ~1e-7. Let's say peak > 5e-7 is C, > 5e-6 is M, > 5e-5 is X.
+    # Standard GOES classification based on peak Soft X-ray flux (W/m^2)
     conditions = [
-        df[soft_col] > 5e-5,
-        df[soft_col] > 5e-6,
-        df[soft_col] > 5e-7
+        df[soft_col] >= 1e-4,
+        df[soft_col] >= 1e-5,
+        df[soft_col] >= 1e-6,
+        df[soft_col] >= 1e-7
     ]
-    choices = ['X', 'M', 'C']
-    df['flare_class'] = np.select(conditions, choices, default='None')
+    choices = ['X', 'M', 'C', 'B']
+    df['flare_class'] = np.select(conditions, choices, default='A')
     
     # Group contiguous flare active regions to create distinct events
     # identifying start, peak, and end times.
@@ -51,11 +51,12 @@ def detect_flares(df, soft_col='solexs_flux', hard_col='helios_flux', window=300
     
     # Determine class for each event based on peak soft flux
     cond_event = [
-        flare_events['peak_soft_flux'] > 5e-5,
-        flare_events['peak_soft_flux'] > 5e-6,
-        flare_events['peak_soft_flux'] > 5e-7
+        flare_events['peak_soft_flux'] >= 1e-4,
+        flare_events['peak_soft_flux'] >= 1e-5,
+        flare_events['peak_soft_flux'] >= 1e-6,
+        flare_events['peak_soft_flux'] >= 1e-7
     ]
-    flare_events['flare_class'] = np.select(cond_event, choices, default='Unknown')
+    flare_events['flare_class'] = np.select(cond_event, choices, default='A')
     
     return df, flare_events
 
