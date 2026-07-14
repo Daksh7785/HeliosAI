@@ -1,108 +1,15 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: timescale/timescaledb-ha
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-helios}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secret}
-      - POSTGRES_DB=${POSTGRES_DB:-heliosai}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U helios"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - helios_network
-
-  redis:
-    image: redis:alpine
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - helios_network
-
-  api:
-    build:
-      context: .
-      target: runtime
-    environment:
-      - POSTGRES_HOST=postgres
-      - REDIS_HOST=redis
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - helios_network
-
-  dash:
-    image: python:3.12-slim
-    command: ["python", "-m", "src.frontend.app"]
-    depends_on:
-      api:
-        condition: service_healthy
-    networks:
-      - helios_network
-
-  streamlit:
-    image: python:3.12-slim
-    command: ["streamlit", "run", "src/frontend/pages/admin/admin_panel.py"]
-    depends_on:
-      api:
-        condition: service_healthy
-    networks:
-      - helios_network
-
-  celery-worker:
-    build:
-      context: .
-      target: runtime
-    command: ["celery", "-A", "src.tasks", "worker", "--loglevel=info"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - helios_network
-
-  mlflow:
-    image: python:3.12-slim
-    command: ["mlflow", "server", "--host", "0.0.0.0"]
-    volumes:
-      - mlflow_artifacts:/mlflow
-    networks:
-      - helios_network
-
-  nginx:
-    image: nginx:alpine
+  heliosai:
+    build: .
     ports:
-      - "80:80"
-    depends_on:
-      - api
-      - dash
-      - streamlit
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
     networks:
       - helios_network
-
-volumes:
-  postgres_data:
-  redis_data:
-  mlflow_artifacts:
 
 networks:
   helios_network:
