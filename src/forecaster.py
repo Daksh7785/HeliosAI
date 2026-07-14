@@ -55,7 +55,7 @@ def train_forecasting_model(df_features, lead_time_minutes=15, model_path='model
     Trains an XGBoost model to forecast flares.
     Calculates TPR, FAR, and Lead Time metrics.
     """
-    features = [c for c in df_features.columns if c not in ['timestamp', 'target_flare_in_N_min', 'solexs_flux', 'helios_flux', 'soft_baseline', 'soft_mad', 'soft_flare_detected', 'hard_baseline', 'hard_mad', 'hard_flare_detected', 'flare_active', 'flare_class', 'event_group']]
+    features = [c for c in df_features.columns if c not in ['timestamp', 'target_flare_in_N_min', 'solexs_flux', 'helios_flux', 'soft_baseline', 'soft_mad', 'soft_flare_detected', 'hard_baseline', 'hard_mad', 'hard_flare_detected', 'flare_active', 'flare_class', 'event_group', 'data_quality_flag']]
     
     X = df_features[features]
     y = df_features['target_flare_in_N_min']
@@ -114,7 +114,7 @@ def train_lstm_forecasting_model(df_features, lead_time_minutes=15, model_path='
     Trains a PyTorch LSTM model to forecast flares.
     Calculates TPR, FAR, and Lead Time metrics.
     """
-    features = [c for c in df_features.columns if c not in ['timestamp', 'target_flare_in_N_min', 'solexs_flux', 'helios_flux', 'soft_baseline', 'soft_mad', 'soft_flare_detected', 'hard_baseline', 'hard_mad', 'hard_flare_detected', 'flare_active', 'flare_class', 'event_group']]
+    features = [c for c in df_features.columns if c not in ['timestamp', 'target_flare_in_N_min', 'solexs_flux', 'helios_flux', 'soft_baseline', 'soft_mad', 'soft_flare_detected', 'hard_baseline', 'hard_mad', 'hard_flare_detected', 'flare_active', 'flare_class', 'event_group', 'data_quality_flag']]
     
     X = df_features[features]
     y = df_features['target_flare_in_N_min']
@@ -175,3 +175,4 @@ if __name__ == "__main__":
     
     print("Training model...")
     train_forecasting_model(df_features)
+    train_lstm_forecasting_model(df_features)
