@@ -31,14 +31,22 @@ class FlareLSTM(nn.Module):
         out = self.fc(out[:, -1, :])
         return self.sigmoid(out)
 
-def train_pytorch_lstm(X_train, y_train, input_dim, epochs=10, batch_size=64, seq_length=10):
-    dataset = TimeSeriesDataset(X_train.values, y_train.values, seq_length=seq_length)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+def train_pytorch_lstm(X_train, y_train, input_dim, epochs=10, batch_size=64, seq_length=10, validation_split=0.2, patience=3):
+    # Split into train and val
+    split_idx = int(len(X_train) * (1 - validation_split))
+    X_t, y_t = X_train.iloc[:split_idx], y_train.iloc[:split_idx]
+    X_v, y_v = X_train.iloc[split_idx:], y_train.iloc[split_idx:]
+    
+    train_dataset = TimeSeriesDataset(X_t.values, y_t.values, seq_length=seq_length)
+    val_dataset = TimeSeriesDataset(X_v.values, y_v.values, seq_length=seq_length)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     model = FlareLSTM(input_dim=input_dim)
     
     # For highly imbalanced data, we weight the positive class
-    pos_weight = len(y_train[y_train==0]) / max(1, len(y_train[y_train==1]))
+    pos_weight = len(y_t[y_t==0]) / max(1, len(y_t[y_t==1]))
     
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     
@@ -48,10 +56,14 @@ def train_pytorch_lstm(X_train, y_train, input_dim, epochs=10, batch_size=64, se
             loss = loss * weights
         return loss.mean()
         
-    model.train()
+    best_val_loss = float('inf')
+    epochs_no_improve = 0
+    best_model_state = None
+    
     for epoch in range(epochs):
+        model.train()
         epoch_loss = 0
-        for batch_x, batch_y in dataloader:
+        for batch_x, batch_y in train_loader:
             optimizer.zero_grad()
             outputs = model(batch_x).squeeze()
             if outputs.dim() == 0:
@@ -65,7 +77,38 @@ def train_pytorch_lstm(X_train, y_train, input_dim, epochs=10, batch_size=64, se
             optimizer.step()
             epoch_loss += loss.item()
             
-        print(f"LSTM Epoch {epoch+1}/{epochs}, Loss: {epoch_loss/len(dataloader):.4f}")
+        # Validation phase
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for batch_x, batch_y in val_loader:
+                outputs = model(batch_x).squeeze()
+                if outputs.dim() == 0:
+                    outputs = outputs.unsqueeze(0)
+                
+                weights = torch.ones_like(batch_y)
+                weights[batch_y == 1] = pos_weight
+                loss = weighted_binary_cross_entropy(outputs, batch_y, weights)
+                val_loss += loss.item()
+                
+        avg_train_loss = epoch_loss / max(1, len(train_loader))
+        avg_val_loss = val_loss / max(1, len(val_loader))
+        
+        print(f"LSTM Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+        
+        # Early Stopping
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            epochs_no_improve = 0
+            best_model_state = model.state_dict().copy()
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= patience:
+                print(f"Early stopping triggered after {epoch+1} epochs.")
+                break
+                
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
         
     return model
 
